@@ -95,7 +95,8 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         sii.qty,
         sii.rate,
         sii.amount,
-        sii.uom
+        sii.uom,
+        sii.territory
     FROM `tabSales Invoice Item` sii
     INNER JOIN `tabSales Invoice` si ON sii.parent = si.name
     WHERE
@@ -188,6 +189,8 @@ def create_credit_notes(docname, submit_credit_notes=False):
             "return_against": original_si.name,
             "posting_date": frappe.utils.nowdate(),
             "taxes_and_charges": original_si.taxes_and_charges,
+            "credit_note.update_outstanding_for_self" : 0,
+            ""
             #"combined_sales_return": doc.name,
             "items": [],
             "taxes": []
@@ -203,7 +206,8 @@ def create_credit_notes(docname, submit_credit_notes=False):
                 "item_code": item.item_code,
                 "qty": qty,
                 "rate": item.rate,
-                "uom": item.uom
+                "uom": item.uom,
+                "territory" : item.territory
             })
 
         # --------------------------------------------------

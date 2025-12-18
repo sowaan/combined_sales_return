@@ -239,7 +239,8 @@ function open_sales_invoice_selector(frm) {
                     amount: parseFloat($chk.data('amount')) || 0,
                     max_returnable_qty: parseFloat($chk.data('max-returnable')) || 0,
                     vat_rate_ratio: parseFloat($chk.data('vat-rate')) || 0,
-                    vat_amount: parseFloat($chk.data('vat-amount')) || 0
+                    vat_amount: parseFloat($chk.data('vat-amount')) || 0,
+                    territory: $chk.data('territory')
                 });
             });
 
@@ -367,13 +368,14 @@ function load_invoice_items_html(dialog, frm) {
                     <thead>
                         <tr>
                             <th style="text-align:center"><input type="checkbox" id="invoice_select_all"></th>
-                            <th>Invoice</th>
+                            <th>Invoice</th>                            
                             <th>Item Code</th>
                             <th>Description</th>
                             <th>UOM</th>
                             <th style="text-align:right">Qty</th>
                             <th style="text-align:right">Rate</th>
                             <th style="text-align:right">Amount</th>
+                            <th>Territory</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -389,6 +391,7 @@ function load_invoice_items_html(dialog, frm) {
                 const dataVat = row.vat_amount || 0;
                 const dataQty = row.original_qty || row.qty || 0;
                 const safeUOM = frappe.utils.escape_html(row.uom || "");
+                const safeTerritory = frappe.utils.escape_html(row.territory || "");
 
                 // amount shown: server amount if present, else compute
                 const showLineAmount = round2(flt_js(row.amount || (dataQty * (row.rate || 0))));
@@ -406,11 +409,13 @@ function load_invoice_items_html(dialog, frm) {
                                 data-uom="${safeUOM}"
                                 data-qty="${dataQty}"
                                 data-rate="${row.rate || 0}"
-                                data-amount="${showLineAmount}"
+                                data-amount="${showLineAmount}"                                
                                 data-max-returnable="${dataMax}"
                                 data-vat-rate="${dataVatRate}"
                                 data-vat-amount="${dataVat}"
+                                data-territory="${safeTerritory}"
                                 id="invoice_row_chk_${idx}">
+                                
                         </td>
                         <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${safeInvoice}</td>
                         <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${safeItemCode}</td>
@@ -419,6 +424,7 @@ function load_invoice_items_html(dialog, frm) {
                         <td style="text-align:right">${dataQty}</td>
                         <td style="text-align:right">${(row.rate || 0).toFixed(2)}</td>
                         <td style="text-align:right">${showLineAmount.toFixed(2)}</td>
+                        <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${safeTerritory}</td>
                     </tr>`;
             });
 
@@ -507,6 +513,8 @@ function add_items_to_child_table(frm, items) {
             frappe.model.set_value(row.doctype, row.name, "qty", -Math.abs(desired || 0));
 
             frappe.model.set_value(row.doctype, row.name, "rate", flt_js(item.rate || 0));
+
+            frappe.model.set_value(row.doctype, row.name, "territory", item.territory);
 
             // VAT fields
             
