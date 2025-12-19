@@ -96,7 +96,7 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         sii.rate,
         sii.amount,
         sii.uom,
-        sii.territory
+        si.territory
     FROM `tabSales Invoice Item` sii
     INNER JOIN `tabSales Invoice` si ON sii.parent = si.name
     WHERE
@@ -130,6 +130,8 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         sql += " ORDER BY si.posting_date DESC"
 
     rows = frappe.db.sql(sql, params, as_dict=True)
+
+    #frappe.msgprint(f"Rows {rows}")
 
     # ----------------------------------------------------------
     # Attach VAT rate & VAT amount PER ITEM (derived correctly)

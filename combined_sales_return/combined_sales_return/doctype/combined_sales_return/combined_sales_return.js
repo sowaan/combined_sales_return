@@ -357,13 +357,13 @@ function load_invoice_items_html(dialog, frm) {
                 <table class="table table-bordered" style="width:100%; min-width:1200px; table-layout: fixed;">
                        <colgroup>
                         <col style="width:40px">
-                        <col style="width:170px">
+                        <col style="width:200px">
                         <col style="width:150px">
-                        <col style="width:250px">
+                        <col style="width:200px">
                         <col style="width:70px">
                         <col style="width:80px">
                         <col style="width:80px">
-                        <col style="width:100px">
+                        <col style="width:80px">
                     </colgroup>
                     <thead>
                         <tr>
