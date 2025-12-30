@@ -4,7 +4,7 @@
 import frappe
 from frappe.model.document import Document
 from frappe.utils import cint
-
+from frappe.utils import flt, money_in_words
 
 class CombinedSalesReturn(Document):
     """
@@ -12,21 +12,55 @@ class CombinedSalesReturn(Document):
     """
 
     def validate(self):
-        """
-        Ensure return quantity is negative and does not exceed max_returnable_qty
-        """
+        frappe.msgprint(f"Validating")
+
+        self.validate_return_quantities()
+        
+        self.calculate_totals()
+
+    def validate_return_quantities(self):
         for i, row in enumerate(self.combined_sales_return_items, start=1):
-            if row.qty > 0:
+
+            if not row.linked_invoice or not row.sales_invoice_item:
+                continue
+
+            original_qty = abs(flt(row.original_qty or 0))
+            current_qty = abs(flt(row.qty or 0))
+
+            submitted_qty, draft_qty = get_returned_qty_breakdown(
+                row.linked_invoice,
+                row.sales_invoice_item,
+                exclude_docname=self.name
+            )
+
+            remaining = original_qty - submitted_qty
+
+            # 🔒 HARD BLOCK (submitted only)
+            if current_qty > remaining:
                 frappe.throw(
-                    f"Row {i} ({row.item_code}): Quantity must be a negative number."
+                    f"""
+                    <b>Row {i} – {row.item_code}</b><br>
+                    Original Qty: {original_qty}<br>
+                    Already Returned (Submitted): {submitted_qty}<br>
+                    Remaining: {remaining}<br>
+                    Attempted Return: {current_qty}
+                    """,
+                    title="Return Quantity Exceeded"
                 )
 
-            if abs(row.qty) > (row.max_returnable_qty or 0):
-                frappe.throw(
-                    f"Row {i} ({row.item_code}): "
-                    f"Return quantity {abs(row.qty)} cannot exceed "
-                    f"max returnable quantity {row.max_returnable_qty}."
+            # ⚠️ SOFT WARNING (drafts)
+            if draft_qty > 0:
+                frappe.msgprint(
+                    f"""
+                    <b>Notice for Row {i} – {row.item_code}</b><br>
+                    There are <b>draft</b> Sales Returns with quantity <b>{draft_qty}</b>
+                    for this invoice item.<br><br>
+                    Quantity validation is performed against <b>submitted</b> returns only.
+                    """,
+                    indicator="orange",
+                    alert=True
                 )
+
 
     def on_submit(self):
         """
@@ -43,7 +77,32 @@ class CombinedSalesReturn(Document):
             )
             raise
 
+    def calculate_totals(self):
+        total_qty = 0
+        total_amount = 0
+        total_taxes = 0
 
+        for row in self.combined_sales_return_items:
+            total_qty += abs(flt(row.qty or 0))
+            total_amount += flt(row.total_amount or 0)
+            total_taxes += flt(row.vat_amount or 0)
+
+        self.total_qty = total_qty
+        self.total = total_amount
+        self.total_taxes = total_taxes
+        self.grand_total = total_amount + total_taxes
+
+        # ✅ GRAND TOTAL IN WORDS (SAR)
+
+        words = money_in_words(
+        abs(self.grand_total),
+        "SAR")
+
+        #frappe.msgprint(f"words {words}")
+
+        self.in_words = words
+    
+    
 # ----------------------------------------------------------------------
 # VAT HELPERS
 # ----------------------------------------------------------------------
@@ -76,6 +135,18 @@ def get_invoice_vat_rate(invoice_name):
 # ----------------------------------------------------------------------
 
 @frappe.whitelist()
+def amount_in_words(amount):   
+    amount = flt(amount)  
+    words = money_in_words(
+        abs(amount),
+        "SAR")
+
+    #frappe.msgprint(f"words {words}")
+
+    return words
+
+
+@frappe.whitelist()
 def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, item_code=None):
     """
     Fetch Sales Invoice Items and attach VAT info from Taxes table
@@ -89,6 +160,7 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
     SELECT
         sii.parent AS sales_invoice,
         sii.name AS invoice_item_row,
+        si.posting_date AS sales_invoice_date,
         sii.item_code,
         sii.item_name,
         sii.description,
@@ -123,6 +195,7 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         sql += " AND si.name = %(sales_invoice)s"
         params["sales_invoice"] = sales_invoice
 
+    
     # ----------------------------------------
     # Item filter (ALWAYS by item_code)
     # ----------------------------------------
@@ -206,7 +279,7 @@ def create_credit_notes(docname, submit_credit_notes=False):
         for item in items:
             qty = item.qty if item.qty < 0 else -abs(item.qty)
 
-            cn.append("items", {
+            row = cn.append("items", {
                 "item_code": item.item_code,
                 "qty": qty,
                 "rate": item.rate,
@@ -214,6 +287,7 @@ def create_credit_notes(docname, submit_credit_notes=False):
                 "territory" : item.territory
             })
 
+        row.sales_invoice_item = item.sales_invoice_item
         # --------------------------------------------------
         # 2️⃣ TAXES (COPIED FROM ORIGINAL SI)
         # --------------------------------------------------
@@ -242,4 +316,61 @@ def create_credit_notes(docname, submit_credit_notes=False):
 
     return "\n".join(messages)
 
+def get_already_returned_qty(invoice, invoice_item_row):
+    """
+    Sum of already returned quantity for a specific
+    Sales Invoice Item (submitted returns only)
+    """
 
+    frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
+
+    result = frappe.db.sql("""
+        SELECT
+            ABS(SUM(sii.qty))
+        FROM `tabSales Invoice Item` sii
+        INNER JOIN `tabSales Invoice` si ON sii.parent = si.name
+        WHERE
+            si.is_return = 1
+            AND si.docstatus = 1
+            AND si.return_against = %s
+            AND sii.sales_invoice_item = %s
+    """, (invoice, invoice_item_row))
+
+    return flt(result[0][0]) if result and result[0][0] else 0
+
+
+def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
+    """
+    Returns (submitted_qty, draft_qty)
+    """
+    params = [invoice, invoice_item_row]
+    exclude_cond = ""
+
+    if exclude_docname:
+        exclude_cond = " AND si.name != %s"
+        params.append(exclude_docname)
+
+    rows = frappe.db.sql(f"""
+        SELECT
+            si.docstatus,
+            ABS(SUM(sii.qty)) AS qty
+        FROM `tabSales Invoice` si
+        INNER JOIN `tabSales Invoice Item` sii ON sii.parent = si.name
+        WHERE
+            si.is_return = 1
+            AND si.return_against = %s
+            AND sii.sales_invoice_item = %s
+            {exclude_cond}
+        GROUP BY si.docstatus
+    """, params, as_dict=True)
+
+    submitted = 0
+    draft = 0
+
+    for r in rows:
+        if r.docstatus == 1:
+            submitted = flt(r.qty)
+        elif r.docstatus == 0:
+            draft = flt(r.qty)
+
+    return submitted, draft

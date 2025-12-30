@@ -20,6 +20,46 @@ frappe.ui.form.on("Combined Sales Return", {
     }
 });
 
+frappe.ui.form.on("Combined Sales Return", {
+    calculate_totals(frm) {
+
+        let total_qty = 0;
+        let total_amount = 0;
+        let total_taxes = 0;
+
+        (frm.doc.combined_sales_return_items || []).forEach(row => {
+            total_qty += Math.abs(flt_js(row.qty || 0));
+            total_amount += flt_js(row.amount || 0);
+            total_taxes += flt_js(row.vat_amount || 0);
+        });
+
+        // ✅ DEFINE AFTER VALUES ARE CALCULATED
+        const grand_total = Math.abs(round2(total_amount + total_taxes));
+
+        console.log("total_amount:", total_amount);
+        console.log("total_taxes:", total_taxes);
+        console.log("grand_total:", grand_total);
+
+        frm.set_value("total_qty", round2(total_qty));
+        frm.set_value("total", round2(total_amount));
+        frm.set_value("total_taxes", round2(total_taxes));
+        frm.set_value("grand_total", grand_total);
+
+        
+        frappe.call({
+            method: "combined_sales_return.combined_sales_return.doctype.combined_sales_return.combined_sales_return.amount_in_words",
+            args: {
+                amount: grand_total
+            },
+            callback(r) {
+                frm.set_value("in_words", r.message || "");
+            }
+        });
+         
+    }
+});
+
+
 // helpers
 function flt_js(v) {
     if (typeof v === "number") return parseFloat(v);
@@ -235,6 +275,7 @@ function open_sales_invoice_selector(frm) {
                     description: $chk.data('description'),
                     uom: $chk.data('uom'),   // ✅ ADD THIS
                     qty: parseFloat($chk.data('qty')) || 0,
+                    sales_invoice_date: $chk.data('sales-invoice-date'),
                     rate: parseFloat($chk.data('rate')) || 0,
                     amount: parseFloat($chk.data('amount')) || 0,
                     max_returnable_qty: parseFloat($chk.data('max-returnable')) || 0,
@@ -360,8 +401,9 @@ function load_invoice_items_html(dialog, frm) {
                         <col style="width:200px">
                         <col style="width:150px">
                         <col style="width:200px">
-                        <col style="width:70px">
-                        <col style="width:80px">
+                        <col style="width:100px">
+                        <col style="width:70px"> 
+                        <col style="width:120px">
                         <col style="width:80px">
                         <col style="width:80px">
                     </colgroup>
@@ -373,6 +415,7 @@ function load_invoice_items_html(dialog, frm) {
                             <th>Description</th>
                             <th>UOM</th>
                             <th style="text-align:right">Qty</th>
+                            <th>Invoice Date</th> 
                             <th style="text-align:right">Rate</th>
                             <th style="text-align:right">Amount</th>
                             <th>Territory</th>
@@ -386,6 +429,7 @@ function load_invoice_items_html(dialog, frm) {
                 const safeInvoice = frappe.utils.escape_html(row.sales_invoice || '');
                 const safeItemCode = frappe.utils.escape_html(row.item_code || '');
                 const safeItemName = frappe.utils.escape_html(row.item_name || "");
+                const invoiceDate = row.sales_invoice_date || "";
                 const dataMax = row.max_returnable_qty || 0;
                 const dataVatRate = row.vat_rate_ratio || 0;
                 const dataVat = row.vat_amount || 0;
@@ -408,6 +452,7 @@ function load_invoice_items_html(dialog, frm) {
                                 data-description="${frappe.utils.escape_html(row.description||'')}"
                                 data-uom="${safeUOM}"
                                 data-qty="${dataQty}"
+                                data-sales-invoice-date="${invoiceDate}"
                                 data-rate="${row.rate || 0}"
                                 data-amount="${showLineAmount}"                                
                                 data-max-returnable="${dataMax}"
@@ -422,6 +467,7 @@ function load_invoice_items_html(dialog, frm) {
                         <td style="word-break:break-word">${safeItemName ? safeItemName + " — " + safeDesc : safeDesc}</td>
                         <td style="text-align:center" title="${escape_attr(row.uom)}">${safeUOM}</td>
                         <td style="text-align:right">${dataQty}</td>
+                        <td style="text-align:center">${invoiceDate}</td>
                         <td style="text-align:right">${(row.rate || 0).toFixed(2)}</td>
                         <td style="text-align:right">${showLineAmount.toFixed(2)}</td>
                         <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${safeTerritory}</td>
@@ -505,6 +551,8 @@ function add_items_to_child_table(frm, items) {
             const originalQty = flt_js(item.qty || item.original_qty || 0);
             frappe.model.set_value(row.doctype, row.name, "original_qty", originalQty);
 
+            frappe.model.set_value(row.doctype, row.name, "sales_invoice_date", item.sales_invoice_date);
+
             const maxReturnable = Math.max(flt_js(item.max_returnable_qty || originalQty || 0), 0);
             frappe.model.set_value(row.doctype, row.name, "max_returnable_qty", maxReturnable);
 
@@ -564,5 +612,9 @@ function add_items_to_child_table(frm, items) {
 
     // final refresh so grid shows all values
     frm.refresh_field("combined_sales_return_items");
+
+    // 🔥 FORCE recalculation immediately (amounts + words)
+    frm.trigger("calculate_totals");
+
     if (added) frappe.msgprint(`${added} item(s) added.`);
 }

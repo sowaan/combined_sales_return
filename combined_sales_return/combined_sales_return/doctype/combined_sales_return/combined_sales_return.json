@@ -29,7 +29,15 @@
   "incoterm",
   "named_place",
   "section_break_lkzh",
-  "sales_return_taxes_and_charges"
+  "sales_return_taxes_and_charges",
+  "summary_section",
+  "total",
+  "total_taxes",
+  "in_words",
+  "column_break_rpkt",
+  "total_qty",
+  "grand_total",
+  "in_words_arabic"
  ],
  "fields": [
   {
@@ -206,13 +214,55 @@
    "fieldname": "named_place",
    "fieldtype": "Data",
    "label": "Named Place"
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "total",
+   "fieldtype": "Data",
+   "label": "Total"
+  },
+  {
+   "fieldname": "total_taxes",
+   "fieldtype": "Data",
+   "label": "Total Taxes"
+  },
+  {
+   "fieldname": "column_break_rpkt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_qty",
+   "fieldtype": "Data",
+   "label": "Total Quantity"
+  },
+  {
+   "fieldname": "grand_total",
+   "fieldtype": "Data",
+   "label": "Grand Total (SAR)"
+  },
+  {
+   "default": "SAR",
+   "fieldname": "in_words",
+   "fieldtype": "Data",
+   "label": "In Words",
+   "read_only": 1
+  },
+  {
+   "fieldname": "in_words_arabic",
+   "fieldtype": "Data",
+   "label": "In Words Arabic",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-12-12 14:05:17.480660",
+ "modified": "2025-12-30 13:05:40.183165",
  "modified_by": "Administrator",
  "module": "Combined Sales Return",
  "name": "Combined Sales Return",
