@@ -5,14 +5,13 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import cint
 from frappe.utils import flt, money_in_words
-
+from combined_sales_return.combined_sales_return.api.delivery_note_return import create_return_delivery_note
 class CombinedSalesReturn(Document):
     """
     DocType: Combined Sales Return
     """
 
-    def validate(self):
-        frappe.msgprint(f"Validating")
+    def validate(self):        
 
         self.validate_return_quantities()
         
@@ -35,6 +34,7 @@ class CombinedSalesReturn(Document):
 
             remaining = original_qty - submitted_qty
 
+            #frappe.msgprint(f"original_qty {original_qty} submitted_qty {submitted_qty}")
             # 🔒 HARD BLOCK (submitted only)
             if current_qty > remaining:
                 frappe.throw(
@@ -76,6 +76,42 @@ class CombinedSalesReturn(Document):
                 "CombinedSalesReturn.on_submit"
             )
             raise
+
+        # -------------------------------
+        # OPTIONAL: DELIVERY NOTE RETURN
+        # -------------------------------
+        if not getattr(self, "create_delivery_note", 0):
+            return
+
+        grouped_by_dn = {}
+
+        for row in self.combined_sales_return_items:
+
+            # safety
+            if not row.sales_invoice_item:
+                continue
+
+            si_item = frappe.get_doc(
+                "Sales Invoice Item",
+                row.sales_invoice_item
+            )
+
+            # 🔑 THIS IS THE KEY CHANGE
+            # use Sales Invoice Item.delivery_note
+            if not si_item.delivery_note:
+                continue  # no DN → no stock return
+
+            grouped_by_dn.setdefault(
+                si_item.delivery_note, []
+            ).append(row)
+
+        # create DN return PER delivery note
+        for delivery_note, dn_items in grouped_by_dn.items():
+            create_return_delivery_note(
+                original_delivery_note=delivery_note,
+                items=dn_items,
+                combined_sales_return=self.name
+            )
 
     def calculate_totals(self):
         total_qty = 0
@@ -206,7 +242,7 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
 
     rows = frappe.db.sql(sql, params, as_dict=True)
 
-    frappe.msgprint(f"Rows {rows}")
+    #frappe.msgprint(f"Rows {rows}")
 
     # ----------------------------------------------------------
     # Attach VAT rate & VAT amount PER ITEM (derived correctly)
@@ -284,10 +320,11 @@ def create_credit_notes(docname, submit_credit_notes=False):
                 "qty": qty,
                 "rate": item.rate,
                 "uom": item.uom,
-                "territory" : item.territory
+                "territory" : item.territory,
+                "sales_invoice_item": item.sales_invoice_item
             })
 
-        row.sales_invoice_item = item.sales_invoice_item
+        #row.sales_invoice_item = item.sales_invoice_item
         # --------------------------------------------------
         # 2️⃣ TAXES (COPIED FROM ORIGINAL SI)
         # --------------------------------------------------
@@ -322,7 +359,7 @@ def get_already_returned_qty(invoice, invoice_item_row):
     Sales Invoice Item (submitted returns only)
     """
 
-    frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
+    #frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
 
     result = frappe.db.sql("""
         SELECT
@@ -346,6 +383,8 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
     params = [invoice, invoice_item_row]
     exclude_cond = ""
 
+    #frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
+
     if exclude_docname:
         exclude_cond = " AND si.name != %s"
         params.append(exclude_docname)
@@ -366,6 +405,8 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
 
     submitted = 0
     draft = 0
+    
+    #frappe.msgprint(f"rows {rows}")
 
     for r in rows:
         if r.docstatus == 1:
