@@ -24,26 +24,22 @@ frappe.ui.form.on("Combined Sales Return", {
     calculate_totals(frm) {
 
         let total_qty = 0;
-        let total_amount = 0;
+        let total_net_amount = 0;
         let total_taxes = 0;
 
         (frm.doc.combined_sales_return_items || []).forEach(row => {
             total_qty += Math.abs(flt_js(row.qty || 0));
-            total_amount += flt_js(row.amount || 0);
-            total_taxes += flt_js(row.vat_amount || 0);
+            total_net_amount += flt_js(row.rate * row.qty || 0);     // ✅ NET
+            total_taxes += flt_js(row.vat_amount || 0);      // ✅ TAX
         });
 
-        // ✅ DEFINE AFTER VALUES ARE CALCULATED
-        const grand_total = Math.abs(round2(total_amount + total_taxes));
+        const grand_total = total_net_amount + total_taxes;
 
-        console.log("total_amount:", total_amount);
-        console.log("total_taxes:", total_taxes);
-        console.log("grand_total:", grand_total);
-
-        frm.set_value("total_qty", round2(total_qty));
-        frm.set_value("total", round2(total_amount));
-        frm.set_value("total_taxes", round2(total_taxes));
+        frm.set_value("total_qty", total_qty);
+        frm.set_value("total", total_net_amount);
+        frm.set_value("total_taxes", total_taxes);
         frm.set_value("grand_total", grand_total);
+
 
         
         frappe.call({

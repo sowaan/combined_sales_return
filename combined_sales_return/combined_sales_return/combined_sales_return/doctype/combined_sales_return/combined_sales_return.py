@@ -30,8 +30,8 @@ class CombinedSalesReturn(Document):
         try:
             msg = create_credit_notes(self.name)
             # Optionally show a server message in the UI (useful for debugging)
-            if msg:
-                frappe.msgprint(msg)
+            # if msg:
+            #     frappe.msgprint(msg)
         except Exception:
             # re-raise so ERPNext surface the error during submit
             frappe.log_error(frappe.get_traceback(), "CombinedSalesReturn.on_submit")

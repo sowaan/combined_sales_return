@@ -68,8 +68,8 @@ class CombinedSalesReturn(Document):
         """
         try:
             msg = create_credit_notes(self.name)
-            if msg:
-                frappe.msgprint(msg)
+            # if msg:
+            #     frappe.msgprint(msg)
         except Exception:
             frappe.log_error(
                 frappe.get_traceback(),
@@ -115,18 +115,18 @@ class CombinedSalesReturn(Document):
 
     def calculate_totals(self):
         total_qty = 0
-        total_amount = 0
+        total_net_amount = 0
         total_taxes = 0
 
         for row in self.combined_sales_return_items:
             total_qty += abs(flt(row.qty or 0))
-            total_amount += flt(row.total_amount or 0)
-            total_taxes += flt(row.vat_amount or 0)
+            total_net_amount += flt(row.rate * row.qty or 0)        # ✅ NET ONLY
+            total_taxes += flt(row.vat_amount or 0)          # ✅ TAX ONLY
 
         self.total_qty = total_qty
-        self.total = total_amount
-        self.total_taxes = total_taxes
-        self.grand_total = total_amount + total_taxes
+        self.total = total_net_amount                        # NET
+        self.total_taxes = total_taxes                       # TAX
+        self.grand_total = total_net_amount + total_taxes   # ✅ CORRECT
 
         # ✅ GRAND TOTAL IN WORDS (SAR)
 
