@@ -118,6 +118,7 @@ class CombinedSalesReturn(Document):
         total_net_amount = 0
         total_taxes = 0
 
+
         for row in self.combined_sales_return_items:
             total_qty += abs(flt(row.qty or 0))
             total_net_amount += flt(row.rate * row.qty or 0)        # ✅ NET ONLY
