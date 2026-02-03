@@ -1,9 +1,9 @@
-# Copyright (c) 2025, Sowaan Pvt. Ltd and contributors
+# Copyright (c) 2026, Sowaan Pvt. Ltd and contributors
 # For license information, please see license.txt
 
 # import frappe
 from frappe.model.document import Document
 
 
-class SalesReturnTaxesandCharges(Document):
+class CombinedDeliveryNoteReturnItem(Document):
 	pass

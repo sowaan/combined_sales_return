@@ -415,6 +415,8 @@ function load_invoice_items_html(dialog, frm) {
                             <th style="text-align:right">Rate</th>
                             <th style="text-align:right">Amount</th>
                             <th>Territory</th>
+                            
+                           
                         </tr>
                     </thead>
                     <tbody>
@@ -614,3 +616,31 @@ function add_items_to_child_table(frm, items) {
 
     if (added) frappe.msgprint(`${added} item(s) added.`);
 }
+
+// -------------------------------
+// Store / Damage Qty Validation
+// -------------------------------
+frappe.ui.form.on("Sales Return Item", {
+    store_qty(frm, cdt, cdn) {
+        validate_split_qty(cdt, cdn);
+    },
+    damage_qty(frm, cdt, cdn) {
+        validate_split_qty(cdt, cdn);
+    }
+});
+
+function validate_split_qty(cdt, cdn) {
+    let row = locals[cdt][cdn];
+    if (!row) return;
+
+    let total = flt(row.store_qty || 0) + flt(row.damage_qty || 0);
+    let return_qty = Math.abs(flt(row.qty || 0));
+
+    if (total !== return_qty) {
+        frappe.show_alert({
+            message: "Store Qty + Damage Qty must equal Return Qty",
+            indicator: "orange"
+        });
+    }
+}
+

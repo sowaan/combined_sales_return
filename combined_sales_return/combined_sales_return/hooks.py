@@ -7,6 +7,9 @@ app_license = "mit"
 
 # Apps
 # ------------------
+# doctype_js = {
+#     "Combined Delivery Note Return": "doctype/combined_delivery_note_return/combined_delivery_note_return.js"
+# }
 
 # required_apps = []
 

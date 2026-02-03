@@ -62,54 +62,99 @@ class CombinedSalesReturn(Document):
                 )
 
 
+    # def on_submit(self):
+    #     """
+    #     Create credit notes grouped by linked invoice on submit
+    #     """
+    #     try:
+    #         msg = create_credit_notes(self.name)
+    #         # if msg:
+    #         #     frappe.msgprint(msg)
+    #     except Exception:
+    #         frappe.log_error(
+    #             frappe.get_traceback(),
+    #             "CombinedSalesReturn.on_submit"
+    #         )
+    #         raise
+
+    #     # -------------------------------
+    #     # OPTIONAL: DELIVERY NOTE RETURN
+    #     # -------------------------------
+    #     if not getattr(self, "create_delivery_note", 0):
+    #         return
+
+    #     grouped_by_dn = {}
+
+    #     for row in self.combined_sales_return_items:
+
+    #         # safety
+    #         if not row.sales_invoice_item:
+    #             continue
+
+    #         si_item = frappe.get_doc(
+    #             "Sales Invoice Item",
+    #             row.sales_invoice_item
+    #         )
+
+    #         # 🔑 THIS IS THE KEY CHANGE
+    #         # use Sales Invoice Item.delivery_note
+    #         if not si_item.delivery_note:
+    #             continue  # no DN → no stock return
+
+    #         grouped_by_dn.setdefault(
+    #             si_item.delivery_note, []
+    #         ).append(row)
+
+    #     # create DN return PER delivery note
+    #     for delivery_note, dn_items in grouped_by_dn.items():
+    #         create_return_delivery_note(
+    #             original_delivery_note=delivery_note,
+    #             items=dn_items,
+    #             combined_sales_return=self.name
+    #         )
     def on_submit(self):
         """
-        Create credit notes grouped by linked invoice on submit
+        CASE 2:
+        - Multiple Invoices
+        - Multiple Delivery Notes
+        Creates:
+        1. Credit Notes (Sales Invoice Return)
+        2. Delivery Note Returns (Stock)
         """
-        try:
-            msg = create_credit_notes(self.name)
-            # if msg:
-            #     frappe.msgprint(msg)
-        except Exception:
-            frappe.log_error(
-                frappe.get_traceback(),
-                "CombinedSalesReturn.on_submit"
-            )
-            raise
 
-        # -------------------------------
-        # OPTIONAL: DELIVERY NOTE RETURN
-        # -------------------------------
-        if not getattr(self, "create_delivery_note", 0):
-            return
+        # -----------------------------
+        # 1️⃣ CREATE CREDIT NOTES
+        # -----------------------------
+        create_credit_notes(
+            self.name,
+            submit_credit_notes=True
+        )
 
+        # -----------------------------
+        # 2️⃣ GROUP BY DELIVERY NOTE
+        # -----------------------------
         grouped_by_dn = {}
 
         for row in self.combined_sales_return_items:
-
-            # safety
             if not row.sales_invoice_item:
                 continue
 
-            si_item = frappe.get_doc(
-                "Sales Invoice Item",
-                row.sales_invoice_item
-            )
+            si_item = frappe.get_doc("Sales Invoice Item", row.sales_invoice_item)
 
-            # 🔑 THIS IS THE KEY CHANGE
-            # use Sales Invoice Item.delivery_note
             if not si_item.delivery_note:
-                continue  # no DN → no stock return
+                continue
 
             grouped_by_dn.setdefault(
                 si_item.delivery_note, []
             ).append(row)
 
-        # create DN return PER delivery note
-        for delivery_note, dn_items in grouped_by_dn.items():
+        # -----------------------------
+        # 3️⃣ CREATE DN RETURNS
+        # -----------------------------
+        for dn, items in grouped_by_dn.items():
             create_return_delivery_note(
-                original_delivery_note=delivery_note,
-                items=dn_items,
+                original_delivery_note=dn,
+                items=items,
                 combined_sales_return=self.name
             )
 
@@ -297,18 +342,26 @@ def create_credit_notes(docname, submit_credit_notes=False):
 
         cn = frappe.get_doc({
             "doctype": "Sales Invoice",
+            "naming_series": "ACC-SINV-RET-.YYYY.-",
+
             "company": original_si.company,          # ✅ REQUIRED
             "customer": original_si.customer,
             "is_return": 1,
+
             "return_against": original_si.name,
             "posting_date": frappe.utils.nowdate(),
             "taxes_and_charges": original_si.taxes_and_charges,
-            "credit_note.update_outstanding_for_self" : 0,
+            "territory": original_si.territory,
+            "credit_note.update_outstanding_for_self": 0,
             ""
             #"combined_sales_return": doc.name,
             "items": [],
             "taxes": []
         })
+    if original_si.territory:
+        cn.accounting_dimensions = {
+            "territory": original_si.territory
+        }
 
         # --------------------------------------------------
         # 1️⃣ ITEMS (NEGATIVE QTY)
@@ -321,7 +374,7 @@ def create_credit_notes(docname, submit_credit_notes=False):
                 "qty": qty,
                 "rate": item.rate,
                 "uom": item.uom,
-                "territory" : item.territory,
+                "territory": item.territory ,
                 "sales_invoice_item": item.sales_invoice_item
             })
 
@@ -336,7 +389,9 @@ def create_credit_notes(docname, submit_credit_notes=False):
                 "description": tax.description,
                 "rate": tax.rate,
                 "included_in_print_rate": tax.included_in_print_rate,
-                "cost_center": tax.cost_center
+                "cost_center": tax.cost_center,
+                 "territory": original_si.territory
+
             })
 
         # --------------------------------------------------
@@ -344,7 +399,7 @@ def create_credit_notes(docname, submit_credit_notes=False):
         # --------------------------------------------------
         cn.set_missing_values()
         cn.calculate_taxes_and_totals()
-
+        cn.territory = original_si.territory
         cn.insert(ignore_permissions=True)
 
         if submit_credit_notes:
@@ -416,3 +471,9 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
             draft = flt(r.qty)
 
     return submitted, draft
+
+# ***********
+
+
+
+
