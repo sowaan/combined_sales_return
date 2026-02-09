@@ -102,6 +102,10 @@ function open_dn_popup(frm) {
                 row.delivered_qty = d.qty;
                 row.return_qty = Math.abs(d.qty);
                 row.rate = d.rate;
+                row.stock_uom = d.stockUom;
+                row.stock_uom_rate = d.stockUomRate;
+                row.dn_rate = d.dnRate;
+
                 row.amount = d.amount;
             });
 
@@ -177,8 +181,11 @@ function load_dn_items(dialog) {
                             <th></th>
                             <th>Delivery Note</th>
                             <th>Item</th>
-                            <th>Qty</th>
+                            <th>Remaining Qty</th>
+                            <th>Remaining Units</th>
+               
                             <th>Rate</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -194,13 +201,19 @@ function load_dn_items(dialog) {
                                 data-item-code="${r.item_code}"
                                 data-item-name="${r.item_name}"
                                 data-qty="${r.delivered_qty}"
-                                data-rate="${r.rate}"
+                                 data-rate="${r.rate}"
+                                data-stock-uom="${r.stock_uom}"
+                                data-stock-uom-rate="${r.stock_uom_rate}"
+                                data-dn-rate="${r.rate}"
+
                                 data-uom="${r.uom}"  
                                 data-amount="${r.amount}">
                         </td>
                         <td>${r.delivery_note}</td>
                         <td>${r.item_code} – ${r.item_name}</td>
-                        <td>${r.delivered_qty}</td>
+                        <td>${r.remaining_ctn}</td>
+                        <td>${r.remaining_pcs}</td>
+              
                         <td>${r.rate}</td>
                     </tr>`;
             });
@@ -227,5 +240,66 @@ function validate_qty(cdt, cdn) {
             message: "Store Qty + Damage Qty must equal Return Qty",
             indicator: "orange"
         });
+    }
+}
+
+frappe.ui.form.on("Combined Delivery Note Return Item", {
+    uom(frm, cdt, cdn) {
+        set_rate_by_uom(cdt, cdn);
+    },
+
+    return_qty(frm, cdt, cdn) {
+        enforce_integer_qty(cdt, cdn);
+        recalc_amount(cdt, cdn);
+    },
+
+    store_qty(frm, cdt, cdn) {
+        enforce_integer_qty(cdt, cdn);
+    },
+
+    damage_qty(frm, cdt, cdn) {
+        enforce_integer_qty(cdt, cdn);
+    }
+});
+
+function set_rate_by_uom(cdt, cdn) {
+    let r = locals[cdt][cdn];
+
+    // If UNIT / Stock UOM selected → use stock_uom_rate
+    if (r.uom === r.stock_uom) {
+        if (r.stock_uom_rate) {
+            r.rate = r.stock_uom_rate;
+        }
+    }
+    // Else CTN or other UOM → keep DN rate
+    else if (r.dn_rate) {
+        r.rate = r.dn_rate;
+    }
+
+    recalc_amount(cdt, cdn);
+    frappe.refresh_field("items");
+}
+
+function enforce_integer_qty(cdt, cdn) {
+    let r = locals[cdt][cdn];
+
+    ["return_qty", "store_qty", "damage_qty"].forEach(field => {
+        if (r[field] && !Number.isInteger(r[field])) {
+            frappe.msgprint({
+                title: __("Invalid Quantity"),
+                message: __("Quantity must be a whole number. Decimal is not allowed."),
+                indicator: "red"
+            });
+            r[field] = Math.floor(r[field]);
+        }
+    });
+
+    frappe.refresh_field("items");
+}
+
+function recalc_amount(cdt, cdn) {
+    let r = locals[cdt][cdn];
+    if (r.return_qty && r.rate) {
+        r.amount = r.return_qty * r.rate;
     }
 }

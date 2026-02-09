@@ -17,7 +17,9 @@
   "damage_warehouse",
   "rate",
   "amount",
-  "uom"
+  "uom",
+  "store_ctn",
+  "damage_ctn"
  ],
  "fields": [
   {
@@ -96,13 +98,23 @@
    "fieldtype": "Link",
    "label": "UOM",
    "options": "UOM"
+  },
+  {
+   "fieldname": "store_ctn",
+   "fieldtype": "Int",
+   "label": "Store CTN"
+  },
+  {
+   "fieldname": "damage_ctn",
+   "fieldtype": "Int",
+   "label": "Damage CTN"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-09 09:09:28.114834",
+ "modified": "2026-02-09 14:23:28.855137",
  "modified_by": "Administrator",
  "module": "Combined Sales Return",
  "name": "Combined Delivery Note Return Item",
