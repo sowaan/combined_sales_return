@@ -23,43 +23,59 @@ class CombinedSalesReturn(Document):
             if not row.linked_invoice or not row.sales_invoice_item:
                 continue
 
-            original_qty = abs(flt(row.original_qty or 0))
-            current_qty = abs(flt(row.qty or 0))
+            # original_qty = abs(flt(row.original_qty or 0))
+            # current_qty = abs(flt(row.qty or 0))
 
-            submitted_qty, draft_qty = get_returned_qty_breakdown(
-                row.linked_invoice,
-                row.sales_invoice_item,
-                exclude_docname=self.name
+            # submitted_qty, draft_qty = get_returned_qty_breakdown(
+            #     row.linked_invoice,
+            #     row.sales_invoice_item,
+            #     exclude_docname=self.name
+            # )
+
+            # remaining = original_qty - submitted_qty
+
+            # #frappe.msgprint(f"original_qty {original_qty} submitted_qty {submitted_qty}")
+            # # 🔒 HARD BLOCK (submitted only)
+            # if current_qty > remaining:
+            #     frappe.throw(
+            #         f"""
+            #         <b>Row {i} – {row.item_code}</b><br>
+            #         Original Qty: {original_qty}<br>
+            #         Already Returned (Submitted): {submitted_qty}<br>
+            #         Remaining: {remaining}<br>
+            #         Attempted Return: {current_qty}
+            #         """,
+            #         title="Return Quantity Exceeded"
+            #     )
+
+        si_item = frappe.get_doc("Sales Invoice Item", row.sales_invoice_item)
+
+        original_stock_qty = abs(flt(si_item.stock_qty))
+        current_stock_qty = abs(flt(row.store_qty or 0))
+
+        submitted_stock_qty, _ = get_returned_qty_breakdown(
+            row.linked_invoice,
+            row.sales_invoice_item,
+            exclude_docname=self.name
+        )
+
+        remaining_stock_qty = original_stock_qty - submitted_stock_qty
+
+        if current_stock_qty > remaining_stock_qty:
+            frappe.throw(
+                f"""
+                <b>Row {i} – {row.item_code}</b><br>
+                Original (PCS): {original_stock_qty}<br>
+                Returned (PCS): {submitted_stock_qty}<br>
+                Remaining (PCS): {remaining_stock_qty}
+                """,
+                title="Return Quantity Exceeded"
             )
 
-            remaining = original_qty - submitted_qty
-
-            #frappe.msgprint(f"original_qty {original_qty} submitted_qty {submitted_qty}")
-            # 🔒 HARD BLOCK (submitted only)
-            if current_qty > remaining:
-                frappe.throw(
-                    f"""
-                    <b>Row {i} – {row.item_code}</b><br>
-                    Original Qty: {original_qty}<br>
-                    Already Returned (Submitted): {submitted_qty}<br>
-                    Remaining: {remaining}<br>
-                    Attempted Return: {current_qty}
-                    """,
-                    title="Return Quantity Exceeded"
-                )
-
-            # ⚠️ SOFT WARNING (drafts)
-            if draft_qty > 0:
-                frappe.msgprint(
-                    f"""
-                    <b>Notice for Row {i} – {row.item_code}</b><br>
-                    There are <b>draft</b> Sales Returns with quantity <b>{draft_qty}</b>
-                    for this invoice item.<br><br>
-                    Quantity validation is performed against <b>submitted</b> returns only.
-                    """,
-                    indicator="orange",
-                    alert=True
-                )
+        if current_stock_qty % 1 != 0:
+            frappe.throw(
+                f"Decimal quantity not allowed for item {row.item_code}"
+            )
 
 
     # def on_submit(self):
@@ -250,6 +266,10 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         sii.rate,
         sii.amount,
         sii.uom,
+        sii.stock_qty,
+        sii.stock_uom,
+        sii.conversion_factor,
+        sii.stock_uom_rate,
         sii.territory AS territory
     FROM `tabSales Invoice Item` sii
     INNER JOIN `tabSales Invoice` si ON sii.parent = si.name
@@ -314,6 +334,11 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         r["vat_amount"] = vat_amount
         r["original_qty"] = r.qty
         r["max_returnable_qty"] = abs(r.qty or 0)
+        r["original_stock_qty"] = abs(flt(r.stock_qty or 0))
+        r["stock_uom"] = r.stock_uom
+        r["conversion_factor"] = flt(r.conversion_factor or 1)
+        r["stock_uom_rate"] = flt(r.stock_uom_rate or r.rate)
+
 
     return rows
 
@@ -322,12 +347,114 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
 # CREATE CREDIT NOTES
 # ----------------------------------------------------------------------
 
+# @frappe.whitelist()
+# def create_credit_notes(docname, submit_credit_notes=False):
+#     """
+#     Create Credit Notes grouped by Linked Invoice
+#     INCLUDING company, taxes, and proper totals
+#     """
+#     doc = frappe.get_doc("Combined Sales Return", docname)
+
+#     grouped = {}
+#     for row in doc.combined_sales_return_items:
+#         if row.linked_invoice:
+#             grouped.setdefault(row.linked_invoice, []).append(row)
+
+#     messages = []
+
+#     for invoice, items in grouped.items():
+#         original_si = frappe.get_doc("Sales Invoice", invoice)
+
+#         cn = frappe.get_doc({
+#             "doctype": "Sales Invoice",
+#             "naming_series": "ACC-SINV-RET-.YYYY.-",
+
+#             "company": original_si.company,          # ✅ REQUIRED
+#             "customer": original_si.customer,
+#             "is_return": 1,
+
+#             "return_against": original_si.name,
+#             "posting_date": frappe.utils.nowdate(),
+#             "taxes_and_charges": original_si.taxes_and_charges,
+#             "territory": original_si.territory,
+#             "credit_note.update_outstanding_for_self": 0,
+#             ""
+#             #"combined_sales_return": doc.name,
+#             "items": [],
+#             "taxes": []
+#         })
+#     if original_si.territory:
+#         cn.accounting_dimensions = {
+#             "territory": original_si.territory
+#         }
+
+# # ✅ RATE FIX (CTN vs PCS)
+    
+
+#         # --------------------------------------------------
+#         # 1️⃣ ITEMS (NEGATIVE QTY)
+#         # --------------------------------------------------
+#        # --------------------------------------------------
+# # 1️⃣ ITEMS (NEGATIVE QTY)
+# # --------------------------------------------------
+#     for item in items:
+
+#         si_item = frappe.get_doc(
+#             "Sales Invoice Item",
+#             item.sales_invoice_item
+#         )
+
+#         qty = item.qty if item.qty < 0 else -abs(item.qty)
+
+#         # ✅ RATE FIX (CTN vs PCS)
+#         rate = item.rate
+#         if item.uom == si_item.stock_uom:
+#             rate = flt(si_item.stock_uom_rate or item.rate)
+
+#         cn.append("items", {
+#             "item_code": item.item_code,
+#             "qty": qty,
+#             "rate": rate,
+#             "uom": item.uom,
+#             "territory": item.territory,
+#             "sales_invoice_item": item.sales_invoice_item
+#         })
+
+
+#         #row.sales_invoice_item = item.sales_invoice_item
+#         # --------------------------------------------------
+#         # 2️⃣ TAXES (COPIED FROM ORIGINAL SI)
+#         # --------------------------------------------------
+#         for tax in original_si.taxes:
+#             cn.append("taxes", {
+#                 "charge_type": tax.charge_type,
+#                 "account_head": tax.account_head,
+#                 "description": tax.description,
+#                 "rate": tax.rate,
+#                 "included_in_print_rate": tax.included_in_print_rate,
+#                 "cost_center": tax.cost_center,
+#                  "territory": original_si.territory
+
+#             })
+
+#         # --------------------------------------------------
+#         # 3️⃣ CALCULATE TOTALS (MANDATORY)
+#         # --------------------------------------------------
+#         cn.set_missing_values()
+#         cn.calculate_taxes_and_totals()
+#         cn.territory = original_si.territory
+#         cn.insert(ignore_permissions=True)
+
+#         if submit_credit_notes:
+#             cn.submit()
+
+#         messages.append(f"Credit Note created for {invoice}: {cn.name}")
+
+#     return "\n".join(messages)
+
 @frappe.whitelist()
 def create_credit_notes(docname, submit_credit_notes=False):
-    """
-    Create Credit Notes grouped by Linked Invoice
-    INCLUDING company, taxes, and proper totals
-    """
+
     doc = frappe.get_doc("Combined Sales Return", docname)
 
     grouped = {}
@@ -338,50 +465,47 @@ def create_credit_notes(docname, submit_credit_notes=False):
     messages = []
 
     for invoice, items in grouped.items():
+
         original_si = frappe.get_doc("Sales Invoice", invoice)
 
         cn = frappe.get_doc({
             "doctype": "Sales Invoice",
             "naming_series": "ACC-SINV-RET-.YYYY.-",
-
-            "company": original_si.company,          # ✅ REQUIRED
+            "company": original_si.company,
             "customer": original_si.customer,
             "is_return": 1,
-
             "return_against": original_si.name,
             "posting_date": frappe.utils.nowdate(),
             "taxes_and_charges": original_si.taxes_and_charges,
             "territory": original_si.territory,
-            "credit_note.update_outstanding_for_self": 0,
-            ""
-            #"combined_sales_return": doc.name,
             "items": [],
             "taxes": []
         })
-    if original_si.territory:
-        cn.accounting_dimensions = {
-            "territory": original_si.territory
-        }
 
-        # --------------------------------------------------
-        # 1️⃣ ITEMS (NEGATIVE QTY)
-        # --------------------------------------------------
+        # ---------------- ITEMS ----------------
         for item in items:
+
+            si_item = frappe.get_doc(
+                "Sales Invoice Item",
+                item.sales_invoice_item
+            )
+
             qty = item.qty if item.qty < 0 else -abs(item.qty)
 
-            row = cn.append("items", {
+            rate = item.rate
+            if item.uom == si_item.stock_uom:
+                rate = flt(si_item.stock_uom_rate)
+
+            cn.append("items", {
                 "item_code": item.item_code,
                 "qty": qty,
-                "rate": item.rate,
+                "rate": rate,
                 "uom": item.uom,
-                "territory": item.territory ,
-                "sales_invoice_item": item.sales_invoice_item
+                "sales_invoice_item": item.sales_invoice_item,
+                "territory": item.territory
             })
 
-        #row.sales_invoice_item = item.sales_invoice_item
-        # --------------------------------------------------
-        # 2️⃣ TAXES (COPIED FROM ORIGINAL SI)
-        # --------------------------------------------------
+        # ---------------- TAXES ----------------
         for tax in original_si.taxes:
             cn.append("taxes", {
                 "charge_type": tax.charge_type,
@@ -390,22 +514,18 @@ def create_credit_notes(docname, submit_credit_notes=False):
                 "rate": tax.rate,
                 "included_in_print_rate": tax.included_in_print_rate,
                 "cost_center": tax.cost_center,
-                 "territory": original_si.territory
-
+                "territory": original_si.territory
             })
 
-        # --------------------------------------------------
-        # 3️⃣ CALCULATE TOTALS (MANDATORY)
-        # --------------------------------------------------
+        # ---------------- FINALIZE ----------------
         cn.set_missing_values()
         cn.calculate_taxes_and_totals()
-        cn.territory = original_si.territory
         cn.insert(ignore_permissions=True)
 
         if submit_credit_notes:
             cn.submit()
 
-        messages.append(f"Credit Note created for {invoice}: {cn.name}")
+        messages.append(f"Credit Note created: {cn.name}")
 
     return "\n".join(messages)
 

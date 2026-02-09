@@ -204,6 +204,10 @@ def create_return_delivery_note(original_delivery_note, items, combined_sales_re
             continue
 
         dn_item = frappe.get_doc("Delivery Note Item", dn_item_name)
+# ✅ RATE FIX (CTN vs PCS)
+        rate = dn_item.rate
+        if row.uom == dn_item.stock_uom:
+            rate = flt(dn_item.stock_uom_rate or dn_item.rate)
 
         # 🏬 Store Warehouse
         if row.store_qty and row.store_qty > 0:
@@ -216,7 +220,7 @@ def create_return_delivery_note(original_delivery_note, items, combined_sales_re
                 "delivery_note_item": dn_item.name,
                 "territory": row.territory,
                 "uom": row.uom,
-                "rate": row.rate,
+                "rate": rate,
                 "cost_center": dn_item.cost_center,
                 "expense_account": dn_item.expense_account
             })
@@ -231,7 +235,7 @@ def create_return_delivery_note(original_delivery_note, items, combined_sales_re
                 # 🔑 THIS FIELD IS MANDATORY
                 "delivery_note_item": dn_item.name,
                 "territory": row.territory,
-                "rate": row.rate,
+                "rate": rate,
                 "cost_center": dn_item.cost_center,
                 "expense_account": dn_item.expense_account
             })
@@ -248,7 +252,7 @@ def get_customer_delivery_notes(txt, doctype, searchfield, start, page_len, filt
     if not customer:
         return []
 
-    # 🔴 Already returned Delivery Notes
+    # Already returned Delivery Notes
     returned_dns = frappe.get_all(
         "Delivery Note",
         filters={
@@ -258,7 +262,7 @@ def get_customer_delivery_notes(txt, doctype, searchfield, start, page_len, filt
         pluck="return_against"
     )
 
-    # 🟢 Valid Delivery Notes
+    #  Valid Delivery Notes
     dns = frappe.get_all(
         "Delivery Note",
         filters={
@@ -272,7 +276,7 @@ def get_customer_delivery_notes(txt, doctype, searchfield, start, page_len, filt
         page_length=page_len
     )
 
-    # ❌ Exclude already returned DN
+    # Exclude already returned DN
     result = [
         [dn.name] for dn in dns
         if dn.name not in returned_dns

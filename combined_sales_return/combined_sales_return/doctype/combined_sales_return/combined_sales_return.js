@@ -644,3 +644,66 @@ function validate_split_qty(cdt, cdn) {
     }
 }
 
+frappe.ui.form.on("Sales Return Item", {
+    uom(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        if (!row) return;
+
+        if (row.uom === row.stock_uom) {
+            frappe.model.set_value(
+                cdt,
+                cdn,
+                "rate",
+                flt(row.stock_uom_rate)
+            );
+        }
+    }
+});
+
+// frappe.ui.form.on("Sales Return Item", {
+//     store_qty(frm, cdt, cdn) {
+//         validate_split_qty(cdt, cdn);
+//     },
+
+//     damage_qty(frm, cdt, cdn) {
+//         validate_split_qty(cdt, cdn);
+//     },
+
+//     uom(frm, cdt, cdn) {
+//         const row = locals[cdt][cdn];
+//         if (!row) return;
+
+//         // ✅ Auto rate switch on UOM change
+//         if (row.uom === row.stock_uom) {
+//             frappe.model.set_value(
+//                 cdt,
+//                 cdn,
+//                 "rate",
+//                 flt(row.stock_uom_rate)
+//             );
+//         } else {
+//             // fallback to invoice / DN rate
+//             frappe.model.set_value(
+//                 cdt,
+//                 cdn,
+//                 "rate",
+//                 flt(row.rate)
+//             );
+//         }
+//     }
+// });
+
+// function validate_split_qty(cdt, cdn) {
+//     const row = locals[cdt][cdn];
+//     if (!row) return;
+
+//     const total = flt(row.store_qty || 0) + flt(row.damage_qty || 0);
+//     const return_qty = Math.abs(flt(row.qty || 0));
+
+//     if (total !== return_qty) {
+//         frappe.show_alert({
+//             message: __("Store Qty + Damage Qty must equal Return Qty"),
+//             indicator: "orange"
+//         });
+//     }
+// }
