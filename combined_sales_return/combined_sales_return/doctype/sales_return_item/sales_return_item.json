@@ -23,7 +23,9 @@
   "store_qty",
   "damage_qty",
   "store_warehouse",
-  "damage_warehouse"
+  "damage_warehouse",
+  "base_unit_rate",
+  "conversion_factor"
  ],
  "fields": [
   {
@@ -157,13 +159,29 @@
    "fieldtype": "Link",
    "label": "Damage Warehouse",
    "options": "Warehouse"
+  },
+  {
+   "fieldname": "base_unit_rate",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Base Unit Rate",
+   "precision": "2"
+  },
+  {
+   "default": "24",
+   "fieldname": "conversion_factor",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Conversion Factor"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-01-20 12:49:35.769439",
+ "modified": "2026-02-11 18:13:45.585094",
  "modified_by": "Administrator",
  "module": "Combined Sales Return",
  "name": "Sales Return Item",

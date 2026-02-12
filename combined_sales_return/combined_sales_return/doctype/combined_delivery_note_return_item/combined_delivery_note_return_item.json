@@ -11,13 +11,17 @@
   "item_name",
   "delivered_qty",
   "return_qty",
+  "uom",
   "store_qty",
   "damage_qty",
   "store_warehouse",
   "damage_warehouse",
   "rate",
   "amount",
-  "uom"
+  "remaining_stock_qty",
+  "conversion_factor",
+  "stock_uom",
+  "delivery_note_item"
  ],
  "fields": [
   {
@@ -45,6 +49,8 @@
   {
    "fieldname": "delivered_qty",
    "fieldtype": "Float",
+   "hidden": 1,
+   "in_list_view": 1,
    "label": "Delivered Qty",
    "read_only": 1
   },
@@ -96,13 +102,49 @@
    "fieldtype": "Link",
    "label": "UOM",
    "options": "UOM"
+  },
+  {
+   "fieldname": "remaining_stock_qty",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Remaining Stock Qty",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conversion_factor",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Conversion Factor",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Stock UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivery_note_item",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Delivery Note Item",
+   "options": "Delivery Note Item",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-09 17:27:31.021171",
+ "modified": "2026-02-12 10:42:03.813613",
  "modified_by": "Administrator",
  "module": "Combined Sales Return",
  "name": "Combined Delivery Note Return Item",

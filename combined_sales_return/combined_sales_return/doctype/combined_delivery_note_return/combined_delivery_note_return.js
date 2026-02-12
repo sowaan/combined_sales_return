@@ -99,14 +99,17 @@ function open_dn_popup(frm) {
                 row.item_code = d.itemCode;
                 row.item_name = d.itemName;
                 row.uom = d.uom;
-                row.delivered_qty = d.qty;
+                row.delivered_qty = d.remainingStockQty;
                 row.return_qty = Math.abs(d.qty);
                 row.rate = d.rate;
                 row.stock_uom = d.stockUom;
                 row.stock_uom_rate = d.stockUomRate;
                 row.dn_rate = d.dnRate;
-
                 row.amount = d.amount;
+                row.remaining_stock_qty = d.remainingStockQty;
+                row.conversion_factor = d.conversionFactor;
+    
+
             });
 
             frm.refresh_field("items");
@@ -182,10 +185,11 @@ function load_dn_items(dialog) {
                             <th>Delivery Note</th>
                             <th>Item</th>
                             <th>Remaining Qty</th>
-                            <th>Remaining Units</th>
+                            <th>Remaining Units</th>                           
                
                             <th>Rate</th>
                             <th></th>
+                            
                         </tr>
                     </thead>
                     <tbody>
@@ -197,26 +201,27 @@ function load_dn_items(dialog) {
                         <td>
                             <input type="checkbox" class="dn-item-check"
                                 data-delivery-note="${r.delivery_note}"
-                                data-dn-item="${r.delivery_note_item}"
+                                data-delivery-note-item="${r.delivery_note_item}"
                                 data-item-code="${r.item_code}"
                                 data-item-name="${r.item_name}"
                                 data-qty="${r.delivered_qty}"
-                                 data-rate="${r.rate}"
+                                data-rate="${r.rate}"
                                 data-stock-uom="${r.stock_uom}"
                                 data-stock-uom-rate="${r.stock_uom_rate}"
                                 data-dn-rate="${r.rate}"
-
-                                data-uom="${r.uom}"  
-                                data-amount="${r.amount}">
+                                data-uom="${r.uom}"
+                                data-amount="${r.amount}"
+                                data-conversion-factor="${r.conversion_factor}"
+                                data-remaining-stock-qty="${r.remaining_stock_qty}">
                         </td>
                         <td>${r.delivery_note}</td>
                         <td>${r.item_code} – ${r.item_name}</td>
                         <td>${r.remaining_ctn}</td>
                         <td>${r.remaining_pcs}</td>
-              
                         <td>${r.rate}</td>
                     </tr>`;
             });
+
 
             html += "</tbody></table>";
             dialog.fields_dict.items_html.set_value(html);
@@ -243,63 +248,239 @@ function validate_qty(cdt, cdn) {
     }
 }
 
+// frappe.ui.form.on("Combined Delivery Note Return Item", {
+//     uom(frm, cdt, cdn) {
+//         set_rate_by_uom(cdt, cdn);
+//     },
+
+//     return_qty(frm, cdt, cdn) {
+//         enforce_integer_qty(cdt, cdn);
+//         recalc_amount(cdt, cdn);
+//     },
+
+//     store_qty(frm, cdt, cdn) {
+//         enforce_integer_qty(cdt, cdn);
+//     },
+
+//     damage_qty(frm, cdt, cdn) {
+//         enforce_integer_qty(cdt, cdn);
+//     }
+// });
+
 frappe.ui.form.on("Combined Delivery Note Return Item", {
+
     uom(frm, cdt, cdn) {
-        set_rate_by_uom(cdt, cdn);
+
+        let row = locals[cdt][cdn];
+        //console.log(row);
+        // 🔁 Update conversion factor dynamically
+        if (row.uom === row.stock_uom) {
+
+            // If Unit selected
+            row.conversion_factor = 1;
+            row.rate = row.stock_uom_rate;
+
+        } else {
+
+            // If Ctn selected
+            row.conversion_factor = row.conversion_factor;
+            row.rate = row.dn_rate;
+        }
+
+        enforce_max_limit(frm, cdt, cdn);
+        update_remaining_for_item(frm, row.delivery_note_item);
+        recalc_amount(frm, cdt, cdn);
+
+        frm.refresh_field("items");
     },
 
     return_qty(frm, cdt, cdn) {
-        enforce_integer_qty(cdt, cdn);
-        recalc_amount(cdt, cdn);
-    },
+
+    enforce_integer_qty(frm, cdt, cdn);
+
+    let is_valid = enforce_max_limit(frm, cdt, cdn);
+
+    if (is_valid) {
+        recalc_amount(frm, cdt, cdn);
+        update_remaining_for_item(frm, locals[cdt][cdn].delivery_note_item);
+    }
+},   
 
     store_qty(frm, cdt, cdn) {
-        enforce_integer_qty(cdt, cdn);
+        enforce_integer_qty(frm, cdt, cdn);
     },
 
     damage_qty(frm, cdt, cdn) {
-        enforce_integer_qty(cdt, cdn);
+        enforce_integer_qty(frm, cdt, cdn);
     }
 });
 
+
+
 function set_rate_by_uom(cdt, cdn) {
+
     let r = locals[cdt][cdn];
 
-    // If UNIT / Stock UOM selected → use stock_uom_rate
     if (r.uom === r.stock_uom) {
-        if (r.stock_uom_rate) {
-            r.rate = r.stock_uom_rate;
-        }
-    }
-    // Else CTN or other UOM → keep DN rate
-    else if (r.dn_rate) {
+
+        // Unit selected
+        r.rate = r.stock_uom_rate;
+
+    } else {
+
+        // Ctn selected
         r.rate = r.dn_rate;
     }
 
     recalc_amount(cdt, cdn);
-    frappe.refresh_field("items");
 }
 
-function enforce_integer_qty(cdt, cdn) {
-    let r = locals[cdt][cdn];
 
-    ["return_qty", "store_qty", "damage_qty"].forEach(field => {
-        if (r[field] && !Number.isInteger(r[field])) {
-            frappe.msgprint({
-                title: __("Invalid Quantity"),
-                message: __("Quantity must be a whole number. Decimal is not allowed."),
-                indicator: "red"
-            });
-            r[field] = Math.floor(r[field]);
+function enforce_integer_qty(frm, cdt, cdn) {
+
+    let row = locals[cdt][cdn];
+
+    if (row.return_qty && !Number.isInteger(row.return_qty)) {
+
+        frappe.msgprint({
+            title: __("Invalid Quantity"),
+            message: __("Quantity must be a whole number."),
+            indicator: "red"
+        });
+
+        row.return_qty = Math.floor(row.return_qty);
+        frm.refresh_field("items");
+    }
+}
+
+
+function recalc_amount(frm, cdt, cdn) {
+
+    let row = locals[cdt][cdn];
+
+    row.amount = (row.return_qty || 0) * (row.rate || 0);
+
+    frm.refresh_field("items");
+}
+
+
+function enforce_max_limit(frm, cdt, cdn) {
+
+    let current_row = locals[cdt][cdn];
+
+    console.log(current_row)
+    let delivered = current_row.delivered_qty;  // constant 120
+
+    console.log(delivered)
+    let total_stock_qty = 0;
+
+    frm.doc.items.forEach(row => {
+
+        if (row.delivery_note_item === current_row.delivery_note_item) {
+
+            let qty = row.return_qty || 0;
+
+            if (row.uom === row.stock_uom) {
+                total_stock_qty += qty;
+            } else {
+                total_stock_qty += qty * row.conversion_factor;
+            }
         }
     });
 
-    frappe.refresh_field("items");
+    if (total_stock_qty > delivered) {
+
+        frappe.msgprint({
+            title: __("Quantity Exceeded"),
+            message: __("Total return quantity exceeds delivered quantity."),
+            indicator: "red"
+        });
+
+        // Reset only current row
+        current_row.return_qty = 0;
+
+        frm.refresh_field("items");
+
+        return false;
+    }
+
+    return true;
 }
 
-function recalc_amount(cdt, cdn) {
-    let r = locals[cdt][cdn];
-    if (r.return_qty && r.rate) {
-        r.amount = r.return_qty * r.rate;
-    }
+
+
+
+function update_remaining_display(frm, delivery_note_item) {
+
+    let delivered = 0;
+    let used = 0;
+    console.log(delivery_note_item)
+    frm.doc.items.forEach(row => {
+
+        if (row.delivery_note_item === delivery_note_item) {
+
+            delivered = row.remaining_stock_qty;  // original
+
+            let qty = row.return_qty || 0;
+
+            if (row.uom === row.stock_uom) {
+                used += qty;
+            } else {
+                used += qty * row.conversion_factor;
+            }
+        }
+    });
+
+    let remaining = delivered - used;
+
+    console.log(delivered);
+    console.log(used);
+
+    frm.doc.items.forEach(row => {
+        if (row.delivery_note_item === delivery_note_item) {
+            row.remaining_stock_qty = remaining;
+        }
+    });
+
+    frm.refresh_field("items");
 }
+
+
+function update_remaining_for_item(frm, delivery_note_item) {
+
+    let delivered = 0;
+    let used = 0;
+
+    // First loop → calculate used from ALL rows
+    frm.doc.items.forEach(row => {
+
+        if (row.delivery_note_item === delivery_note_item) {
+
+            delivered = row.delivered_qty;
+
+            let qty = row.return_qty || 0;
+
+            if (row.uom === row.stock_uom) {
+                used += qty;
+            } else {
+                used += qty * row.conversion_factor;
+            }
+        }
+    });
+
+    let remaining = delivered - used;
+
+    // Second loop → update display only
+    frm.doc.items.forEach(row => {
+
+        if (row.delivery_note_item === delivery_note_item) {
+            row.remaining_stock_qty = remaining;
+        }
+    });
+
+    frm.refresh_field("items");
+}
+
+
+
+

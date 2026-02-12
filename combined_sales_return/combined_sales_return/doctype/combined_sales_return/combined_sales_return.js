@@ -92,6 +92,7 @@ function writeAmountsToChild(doctype, name, lineAmount, totalAmount, frm) {
 // Qty handler (recalculate vat/amounts)
 frappe.ui.form.on("Sales Return Item", {
     qty(frm, cdt, cdn) {
+
         const row = locals[cdt][cdn];
         if (!row) return;
 
@@ -99,56 +100,95 @@ frappe.ui.form.on("Sales Return Item", {
         const rate = flt(row.rate);
         const maxReturnable = flt(row.max_returnable_qty || 0);
 
-        /* ------------------------------
-           1. Enforce negative quantity
-        --------------------------------*/
+        // ==============================
+        // 1️⃣ Force Negative Qty
+        // ==============================
         if (newQty > 0) {
             frappe.msgprint(
-                `For item ${row.item_code}, quantity must be a negative number.`
+                `For item ${row.item_code}, quantity must be negative.`
             );
             newQty = -Math.abs(newQty);
         }
 
-        /* ------------------------------
-           2. Enforce max returnable qty
-        --------------------------------*/
-        if (maxReturnable >= 0 && Math.abs(newQty) > maxReturnable) {
-            frappe.msgprint(
-                `Return quantity for item ${row.item_code} cannot exceed ${maxReturnable}. Adjusting.`
-            );
-            newQty = -Math.abs(maxReturnable);
+        // ==============================
+        // 2️⃣ Convert Current Qty to Units
+        // ==============================
+
+        const CTN_SIZE = 24;
+
+        // ==============================
+        // 1️⃣ Get total allowed from invoice (already stored in max_returnable_qty)
+        // ==============================
+        let invoiceTotalUnits = 0;
+
+        frm.doc.combined_sales_return_items.forEach(d => {
+
+            let qty = Math.abs(flt(d.max_returnable_qty || 0));
+            let uom = d.uom;
+
+            if (uom === "Ctn") {
+                qty = qty * CTN_SIZE;
+            }
+
+            invoiceTotalUnits += qty;
+        });
+
+        // ==============================
+        // 2️⃣ Get total returned INCLUDING current row
+        // ==============================
+        let totalReturnedUnits = 0;
+
+        frm.doc.combined_sales_return_items.forEach(d => {
+
+            let qty = Math.abs(flt(d.qty || 0));
+            let uom = d.uom;
+
+            if (uom === "Ctn") {
+                qty = qty * CTN_SIZE;
+            }
+
+            totalReturnedUnits += qty;
+                });
+
+        // ==============================
+        // 3️⃣ Validate
+        // ==============================
+        console.log("Invoice Total Units:", invoiceTotalUnits);
+        console.log("Returned Units:", totalReturnedUnits);
+
+        if (totalReturnedUnits > invoiceTotalUnits) {
+            frappe.msgprint("Return quantity exceeds allowed returnable quantity.");
+
+            // reset current row
+            frappe.model.set_value(cdt, cdn, "qty", 0);
+            return;
         }
 
-        /* ------------------------------
-           3. Update qty ONLY if changed
-        --------------------------------*/
-        if (row.qty !== newQty) {
-            frappe.model.set_value(cdt, cdn, "qty", newQty);
-            return; // let handler re-run once with corrected qty
-        }
 
-        /* ------------------------------
-           4. VAT calculation
-        --------------------------------*/
+        // ==============================
+        // 5️⃣ VAT Calculation (unchanged)
+        // ==============================
+
         let vatForReturn = 0;
 
-        const originalVat = flt(row.original_vat || row._original_vat || 0);
-        const originalQty = flt(row.original_qty || row._original_qty || 0);
+        const originalVat = flt(row.original_vat || 0);
+        const originalQty = flt(row.original_qty || 0);
 
         if (originalVat && originalQty) {
             vatForReturn = -Math.abs(
                 originalVat * (Math.abs(newQty) / originalQty)
             );
         } else {
-            const vatRatio = flt(row.vat_rate_ratio || row._vat_rate_ratio || 0);
+            const vatRatio = flt(row.vat_rate_ratio || 0);
             vatForReturn = newQty * rate * vatRatio;
         }
 
         vatForReturn = round2(vatForReturn);
 
-        /* ------------------------------
-           5. Amount calculation (KEY PART)
-        --------------------------------*/
+        // ==============================
+        // 6️⃣ Amount Calculation
+        // ==============================
+
         const lineAmount = round2(newQty * rate);
         const totalAmount = round2(lineAmount + vatForReturn);
 
@@ -156,13 +196,8 @@ frappe.ui.form.on("Sales Return Item", {
 
         if (frappe.meta.get_docfield("Sales Return Item", "vat_amount", frm.doc.name)) {
             frappe.model.set_value(cdt, cdn, "vat_amount", vatForReturn);
-        } else {
-            row._vat_amount = vatForReturn;
         }
 
-        /* ------------------------------
-           6. Write totals & refresh
-        --------------------------------*/
         writeAmountsToChild(
             "Sales Return Item",
             row.name,
@@ -175,6 +210,8 @@ frappe.ui.form.on("Sales Return Item", {
         frm.refresh_field("combined_sales_return_items");
     }
 });
+
+
 
 
 // Dialog to select invoice items
@@ -509,6 +546,7 @@ function load_invoice_items_html(dialog, frm) {
 // Add items to child table and ensure item fields are written
 function add_items_to_child_table(frm, items) {
     let added = 0;
+    let CTN_SIZE = 24;
 
     const has_item_field = !!frappe.meta.get_docfield("Combined Sales Return Items", "item", frm.doc.name);
     const has_item_code_field = !!frappe.meta.get_docfield("Combined Sales Return Items", "item_code", frm.doc.name);
@@ -558,7 +596,21 @@ function add_items_to_child_table(frm, items) {
             if (desired > maxReturnable) desired = maxReturnable;
             frappe.model.set_value(row.doctype, row.name, "qty", -Math.abs(desired || 0));
 
-            frappe.model.set_value(row.doctype, row.name, "rate", flt_js(item.rate || 0));
+            let invoiceRate = flt_js(item.rate || 0);
+
+            // assume invoice rate is per Ctn if UOM = Ctn
+            let baseUnitRate = invoiceRate;
+
+            if (item.uom === "Ctn") {
+                baseUnitRate = invoiceRate / CTN_SIZE;
+            }
+
+            // store permanent base rate
+            frappe.model.set_value(row.doctype, row.name, "base_unit_rate", baseUnitRate);
+
+            // set initial rate correctly
+            frappe.model.set_value(row.doctype, row.name, "rate", invoiceRate);
+
 
             frappe.model.set_value(row.doctype, row.name, "territory", item.territory);
 
@@ -660,50 +712,140 @@ frappe.ui.form.on("Sales Return Item", {
     }
 });
 
-// frappe.ui.form.on("Sales Return Item", {
-//     store_qty(frm, cdt, cdn) {
-//         validate_split_qty(cdt, cdn);
-//     },
+frappe.ui.form.on("Sales Return Item", {
 
-//     damage_qty(frm, cdt, cdn) {
-//         validate_split_qty(cdt, cdn);
-//     },
+    uom(frm, cdt, cdn) {
+        update_rate_and_amount(frm, cdt, cdn);
+    },
 
-//     uom(frm, cdt, cdn) {
-//         const row = locals[cdt][cdn];
-//         if (!row) return;
+    qty(frm, cdt, cdn) {
 
-//         // ✅ Auto rate switch on UOM change
-//         if (row.uom === row.stock_uom) {
-//             frappe.model.set_value(
-//                 cdt,
-//                 cdn,
-//                 "rate",
-//                 flt(row.stock_uom_rate)
-//             );
-//         } else {
-//             // fallback to invoice / DN rate
-//             frappe.model.set_value(
-//                 cdt,
-//                 cdn,
-//                 "rate",
-//                 flt(row.rate)
-//             );
-//         }
-//     }
-// });
+        const row = locals[cdt][cdn];
+        if (!row) return;
 
-// function validate_split_qty(cdt, cdn) {
-//     const row = locals[cdt][cdn];
-//     if (!row) return;
+        // ==================================================
+        // 🔹 1️⃣ Validate Store + Damage Split
+        // ==================================================
+        // let returnQty = Math.abs(flt(row.qty || 0));
+        // let storeQty = Math.abs(flt(row.store_qty || 0));
+        // let damageQty = Math.abs(flt(row.damage_qty || 0));
 
-//     const total = flt(row.store_qty || 0) + flt(row.damage_qty || 0);
-//     const return_qty = Math.abs(flt(row.qty || 0));
+        // if ((storeQty + damageQty) !== returnQty) {
 
-//     if (total !== return_qty) {
-//         frappe.show_alert({
-//             message: __("Store Qty + Damage Qty must equal Return Qty"),
-//             indicator: "orange"
-//         });
-//     }
-// }
+        //     frappe.msgprint({
+        //         title: "Invalid Quantity Split",
+        //         message: "Store Qty + Damage Qty must equal Return Qty",
+        //         indicator: "red"
+        //     });
+
+        //     return;
+        // }
+
+        // ==================================================
+        // 🔹 2️⃣ Convert Current Qty to Units
+        // ==================================================
+
+        const CTN_SIZE = 24;
+
+        let invoiceTotalUnits = 0;
+
+        frm.doc.combined_sales_return_items.forEach(d => {
+
+            let qty = Math.abs(flt(d.max_returnable_qty || 0));
+            let uom = d.uom;
+
+            if (uom === "Ctn") {
+                qty = qty * CTN_SIZE;
+            }
+
+            invoiceTotalUnits += qty;
+        });
+
+        let totalReturnedUnits = 0;
+
+        frm.doc.combined_sales_return_items.forEach(d => {
+
+            let qty = Math.abs(flt(d.qty || 0));
+            let uom = d.uom;
+
+            if (uom === "Ctn") {
+                qty = qty * CTN_SIZE;
+            }
+
+            totalReturnedUnits += qty;
+        });
+
+        // ==================================================
+        // 🔹 3️⃣ Validate Against Invoice
+        // ==================================================
+
+        if (totalReturnedUnits > invoiceTotalUnits) {
+
+            frappe.msgprint({
+                title: "Quantity Exceeded",
+                message: "Return quantity exceeds allowed returnable quantity.",
+                indicator: "red"
+            });
+
+            frappe.model.set_value(cdt, cdn, "qty", 0);
+            return;
+        }
+
+        // ==================================================
+        // 🔹 4️⃣ Continue Normal Calculation
+        // ==================================================
+
+        update_rate_and_amount(frm, cdt, cdn);
+    }
+});
+
+
+function update_rate_and_amount(frm, cdt, cdn) {
+
+    const row = locals[cdt][cdn];
+    if (!row) return;
+
+    const CTN_SIZE = 24;
+
+    // ==============================
+    // 1️⃣ Determine rate from base unit
+    // ==============================
+
+    let baseUnitRate = flt(row.base_unit_rate || 0);
+
+    if (!baseUnitRate) {
+        console.log("Base unit rate missing");
+        return;
+    }
+
+    let newRate = baseUnitRate;
+
+    if (row.uom === "Ctn") {
+        newRate = baseUnitRate * CTN_SIZE;
+    }
+
+    frappe.model.set_value(cdt, cdn, "rate", newRate);
+
+    // ==============================
+    // 2️⃣ Calculate Amount
+    // ==============================
+
+    let qty = flt(row.qty);
+    let amount = qty * newRate;
+
+    frappe.model.set_value(cdt, cdn, "amount", amount);
+
+    // ==============================
+    // 3️⃣ VAT (if needed)
+    // ==============================
+
+    let vatRatio = flt(row.vat_rate_ratio || 0);
+    let vat = amount * vatRatio;
+
+    frappe.model.set_value(cdt, cdn, "vat_amount", vat);
+
+    frm.refresh_field("combined_sales_return_items");
+}
+
+
+

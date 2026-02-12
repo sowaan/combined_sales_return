@@ -18,116 +18,73 @@ class CombinedSalesReturn(Document):
         self.calculate_totals()
 
     def validate_return_quantities(self):
+
         for i, row in enumerate(self.combined_sales_return_items, start=1):
 
             if not row.linked_invoice or not row.sales_invoice_item:
                 continue
 
-            # original_qty = abs(flt(row.original_qty or 0))
-            # current_qty = abs(flt(row.qty or 0))
-
-            # submitted_qty, draft_qty = get_returned_qty_breakdown(
-            #     row.linked_invoice,
-            #     row.sales_invoice_item,
-            #     exclude_docname=self.name
-            # )
-
-            # remaining = original_qty - submitted_qty
-
-            # #frappe.msgprint(f"original_qty {original_qty} submitted_qty {submitted_qty}")
-            # # 🔒 HARD BLOCK (submitted only)
-            # if current_qty > remaining:
-            #     frappe.throw(
-            #         f"""
-            #         <b>Row {i} – {row.item_code}</b><br>
-            #         Original Qty: {original_qty}<br>
-            #         Already Returned (Submitted): {submitted_qty}<br>
-            #         Remaining: {remaining}<br>
-            #         Attempted Return: {current_qty}
-            #         """,
-            #         title="Return Quantity Exceeded"
-            #     )
-
-        si_item = frappe.get_doc("Sales Invoice Item", row.sales_invoice_item)
-
-        original_stock_qty = abs(flt(si_item.stock_qty))
-        current_stock_qty = abs(flt(row.store_qty or 0))
-
-        submitted_stock_qty, _ = get_returned_qty_breakdown(
-            row.linked_invoice,
-            row.sales_invoice_item,
-            exclude_docname=self.name
-        )
-
-        remaining_stock_qty = original_stock_qty - submitted_stock_qty
-
-        if current_stock_qty > remaining_stock_qty:
-            frappe.throw(
-                f"""
-                <b>Row {i} – {row.item_code}</b><br>
-                Original (PCS): {original_stock_qty}<br>
-                Returned (PCS): {submitted_stock_qty}<br>
-                Remaining (PCS): {remaining_stock_qty}
-                """,
-                title="Return Quantity Exceeded"
+            # -------------------------------------------------
+            # 1️⃣ Fetch original invoice item
+            # -------------------------------------------------
+            si_item = frappe.get_doc(
+                "Sales Invoice Item",
+                row.sales_invoice_item
             )
 
-        if current_stock_qty % 1 != 0:
-            frappe.throw(
-                f"Decimal quantity not allowed for item {row.item_code}"
+            original_stock_qty = abs(flt(si_item.stock_qty))
+
+            # -------------------------------------------------
+            # 2️⃣ Determine conversion factor based on UOM
+            # -------------------------------------------------
+            if row.uom == "Unit":
+                conversion_factor = 1
+            else:
+                conversion_factor = flt(row.conversion_factor or 1)
+
+            # -------------------------------------------------
+            # 3️⃣ Convert current return to stock UOM
+            # -------------------------------------------------
+            current_return_qty = abs(flt(row.qty or 0))
+            current_stock_qty = current_return_qty * conversion_factor
+
+            # -------------------------------------------------
+            # 4️⃣ Get already returned qty (stock UOM)
+            # -------------------------------------------------
+            submitted_stock_qty, _ = get_returned_qty_breakdown(
+                row.linked_invoice,
+                row.sales_invoice_item,
+                exclude_docname=self.name
             )
 
+            total_after_this_return = submitted_stock_qty + current_stock_qty
 
-    # def on_submit(self):
-    #     """
-    #     Create credit notes grouped by linked invoice on submit
-    #     """
-    #     try:
-    #         msg = create_credit_notes(self.name)
-    #         # if msg:
-    #         #     frappe.msgprint(msg)
-    #     except Exception:
-    #         frappe.log_error(
-    #             frappe.get_traceback(),
-    #             "CombinedSalesReturn.on_submit"
-    #         )
-    #         raise
+            # -------------------------------------------------
+            # 5️⃣ Final validation
+            # -------------------------------------------------
+            if total_after_this_return > original_stock_qty:
+                frappe.throw(
+                    f"""
+                    <b>Row {i} – {row.item_code}</b><br><br>
+                    Original Invoice Qty (Stock UOM): {original_stock_qty}<br>
+                    Already Returned (Stock UOM): {submitted_stock_qty}<br>
+                    Current Return (Stock UOM): {current_stock_qty}<br>
+                    <br>
+                    <b>Total After Return: {total_after_this_return}</b><br><br>
+                    Return quantity exceeds Sales Invoice quantity.
+                    """,
+                    title="Return Quantity Exceeded"
+                )
 
-    #     # -------------------------------
-    #     # OPTIONAL: DELIVERY NOTE RETURN
-    #     # -------------------------------
-    #     if not getattr(self, "create_delivery_note", 0):
-    #         return
+            # -------------------------------------------------
+            # 6️⃣ Prevent decimal stock qty
+            # -------------------------------------------------
+            if current_stock_qty % 1 != 0:
+                frappe.throw(
+                    f"Decimal quantity not allowed for item {row.item_code}"
+                )
 
-    #     grouped_by_dn = {}
-
-    #     for row in self.combined_sales_return_items:
-
-    #         # safety
-    #         if not row.sales_invoice_item:
-    #             continue
-
-    #         si_item = frappe.get_doc(
-    #             "Sales Invoice Item",
-    #             row.sales_invoice_item
-    #         )
-
-    #         # 🔑 THIS IS THE KEY CHANGE
-    #         # use Sales Invoice Item.delivery_note
-    #         if not si_item.delivery_note:
-    #             continue  # no DN → no stock return
-
-    #         grouped_by_dn.setdefault(
-    #             si_item.delivery_note, []
-    #         ).append(row)
-
-    #     # create DN return PER delivery note
-    #     for delivery_note, dn_items in grouped_by_dn.items():
-    #         create_return_delivery_note(
-    #             original_delivery_note=delivery_note,
-    #             items=dn_items,
-    #             combined_sales_return=self.name
-    #         )
+    
     def on_submit(self):
         """
         CASE 2:
@@ -188,7 +145,7 @@ class CombinedSalesReturn(Document):
         self.total_qty = total_qty
         self.total = total_net_amount                        # NET
         self.total_taxes = total_taxes                       # TAX
-        self.grand_total = total_net_amount + total_taxes   # ✅ CORRECT
+        self.grand_total = flt(total_net_amount + total_taxes, 0)   # ✅ CORRECT
 
         # ✅ GRAND TOTAL IN WORDS (SAR)
 
