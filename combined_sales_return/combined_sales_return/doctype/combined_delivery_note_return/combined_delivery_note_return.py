@@ -10,6 +10,29 @@ class CombinedDeliveryNoteReturn(Document):
     def validate(self):
         self.validate_return_quantities()
         self.validate_warehouse_selection()
+        self.validate_qty_breakup()
+
+    def validate_qty_breakup(self):
+
+        for i, row in enumerate(self.items, start=1):
+
+            return_qty = flt(row.return_qty)
+            store_qty = flt(row.store_qty)
+            damage_qty = flt(row.damage_qty)
+
+            if abs(return_qty) <= 0:
+                continue
+
+            if (store_qty + damage_qty) != return_qty:
+
+                frappe.throw(
+                    f"""
+                    <b>Row {i} – {row.item_code}</b><br><br>
+                    Store Qty ({store_qty}) + Damage Qty ({damage_qty})<br>
+                    must be equal to Return Qty ({abs(return_qty)}).
+                    """,
+                    title="Quantity Mismatch"
+                )
 
     def validate_return_quantities(self):
 
@@ -108,6 +131,7 @@ class CombinedDeliveryNoteReturn(Document):
                     title="Missing Damage Warehouse"
                 )
 
+    
 
     def on_submit(self):
         dn_map = {}
@@ -349,4 +373,5 @@ def get_delivery_note_items(customer, delivery_note=None, item_code=None, fetch_
 
 
     return data
+
 

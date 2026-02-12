@@ -388,6 +388,9 @@ function enforce_max_limit(frm, cdt, cdn) {
         }
     });
 
+    console.log(total_stock_qty)
+    console.log(delivered)
+    
     if (total_stock_qty > delivered) {
 
         frappe.msgprint({

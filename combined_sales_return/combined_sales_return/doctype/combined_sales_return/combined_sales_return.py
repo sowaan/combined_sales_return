@@ -17,6 +17,8 @@ class CombinedSalesReturn(Document):
         
         self.calculate_totals()
 
+        self.validate_qty_breakup()
+
     def validate_return_quantities(self):
 
         for i, row in enumerate(self.combined_sales_return_items, start=1):
@@ -84,7 +86,30 @@ class CombinedSalesReturn(Document):
                     f"Decimal quantity not allowed for item {row.item_code}"
                 )
 
-    
+    def validate_qty_breakup(self):
+
+        for i, row in enumerate(self.combined_sales_return_items, start=1):
+
+            return_qty = flt(row.qty)   # In Sales Return it's usually `qty`
+            store_qty = flt(row.store_qty)
+            damage_qty = flt(row.damage_qty)
+
+            frappe.msgprint (f"return_qty {return_qty} store_qty {store_qty} damage_qty {damage_qty}")
+            if abs(return_qty) <= 0:
+                continue
+
+            if (store_qty + damage_qty) != return_qty:
+
+                frappe.throw(
+                    f"""
+                    <b>Row {i} – {row.item_code}</b><br><br>
+                    Store Qty ({store_qty}) + Damage Qty ({damage_qty})<br>
+                    must be equal to Return Qty ({abs(return_qty)}).
+                    """,
+                    title="Quantity Mismatch"
+                )
+
+                
     def on_submit(self):
         """
         CASE 2:
@@ -548,6 +573,8 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
             draft = flt(r.qty)
 
     return submitted, draft
+
+
 
 # ***********
 
