@@ -70,13 +70,15 @@ class CombinedDeliveryNoteReturn(Document):
 
             # 4️⃣ Final validation
             if total_after_return > original_stock_qty:
+                max_allowed_qty = original_stock_qty - submitted_stock_qty
 
                 frappe.throw(
                     f"""
                     <b>Row {i} – {row.item_code}</b><br><br>
                     Original Delivered (Stock): {original_stock_qty}<br>
                     Already Returned (Stock): {submitted_stock_qty}<br>
-                    This Document Total (Stock): {current_doc_stock_qty}<br><br>
+                    This Document Total (Stock): {current_doc_stock_qty}<br>
+                    Maximum Allowed Return (Stock): {max_allowed_qty}<br><br>
                     <b>Total After Return: {total_after_return}</b><br><br>
                     Return quantity exceeds delivered quantity.
                     """,

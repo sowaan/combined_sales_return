@@ -41,7 +41,7 @@ class CombinedSalesReturn(Document):
             # Fetch original invoice item
             si_item = frappe.get_doc("Sales Invoice Item", invoice_item)
 
-            frappe.msgprint(f"si_item.parent {si_item.parent} invoice_item {invoice_item}")
+            #frappe.msgprint(f"si_item.parent {si_item.parent} invoice_item {invoice_item}")
 
             original_stock_qty = abs(flt(si_item.stock_qty))
 
@@ -72,14 +72,16 @@ class CombinedSalesReturn(Document):
             # 5️⃣ Final Validation
             # ----------------------------------------
             if total_after_this_return > original_stock_qty:
-                #return
+                
+                max_allowed_qty = original_stock_qty - submitted_stock_qty
                 frappe.throw(
                     f"""
                     <b>Item: {si_item.item_code}</b><br><br>
                     Original Invoice Stock Qty: {original_stock_qty}<br>
                     Already Returned (Submitted): {submitted_stock_qty}<br>
-                    Current Document (Stock): {current_doc_stock_qty}<br>
-                    <br>
+                    Current Document (Stock): {current_doc_stock_qty}<br>                    
+                    Maximum Allowed Return (Stock): {max_allowed_qty}<br><br>
+
                     <b>Total After Return: {total_after_this_return}</b><br><br>
                     Return quantity exceeds Sales Invoice quantity.
                     """,
@@ -467,7 +469,7 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
     Returns (submitted_stock_qty, draft_stock_qty)
     All quantities are in STOCK UOM
     """
-    frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
+    #frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
 
     params = [invoice, invoice_item_row]
     exclude_cond = ""
