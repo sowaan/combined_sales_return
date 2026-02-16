@@ -21,56 +21,64 @@ class CombinedSalesReturn(Document):
 
     def validate_return_quantities(self):
 
-        for i, row in enumerate(self.combined_sales_return_items, start=1):
+        # --------------------------------------------
+        # 1️⃣ Group rows by Sales Invoice Item
+        # --------------------------------------------
+        grouped = {}
 
-            if not row.linked_invoice or not row.sales_invoice_item:
+        for row in self.combined_sales_return_items:
+
+            if not row.sales_invoice_item:
                 continue
 
-            # -------------------------------------------------
-            # 1️⃣ Fetch original invoice item
-            # -------------------------------------------------
-            si_item = frappe.get_doc(
-                "Sales Invoice Item",
-                row.sales_invoice_item
-            )
+            grouped.setdefault(row.sales_invoice_item, []).append(row)
+
+        # --------------------------------------------
+        # 2️⃣ Validate each invoice item group
+        # --------------------------------------------
+        for invoice_item, rows in grouped.items():
+
+            # Fetch original invoice item
+            si_item = frappe.get_doc("Sales Invoice Item", invoice_item)
+
+            frappe.msgprint(f"si_item.parent {si_item.parent} invoice_item {invoice_item}")
 
             original_stock_qty = abs(flt(si_item.stock_qty))
 
-            # -------------------------------------------------
-            # 2️⃣ Determine conversion factor based on UOM
-            # -------------------------------------------------
-            if row.uom == "Unit":
-                conversion_factor = 1
-            else:
-                conversion_factor = flt(row.conversion_factor or 1)
+            # ----------------------------------------
+            # 3️⃣ Calculate current document stock qty
+            # ----------------------------------------
+            current_doc_stock_qty = 0
 
-            # -------------------------------------------------
-            # 3️⃣ Convert current return to stock UOM
-            # -------------------------------------------------
-            current_return_qty = abs(flt(row.qty or 0))
-            current_stock_qty = current_return_qty * conversion_factor
+            for row in rows:
 
-            # -------------------------------------------------
-            # 4️⃣ Get already returned qty (stock UOM)
-            # -------------------------------------------------
-            submitted_stock_qty, _ = get_returned_qty_breakdown(
-                row.linked_invoice,
-                row.sales_invoice_item,
+                conversion_factor = flt(row.conversion_factor) or 1
+                qty = abs(flt(row.qty))
+
+                current_doc_stock_qty += qty * conversion_factor
+
+            # ----------------------------------------
+            # 4️⃣ Get already submitted returns
+            # ----------------------------------------
+            submitted_stock_qty, draft_qty = get_returned_qty_breakdown(
+                si_item.parent,
+                invoice_item,
                 exclude_docname=self.name
             )
 
-            total_after_this_return = submitted_stock_qty + current_stock_qty
+            total_after_this_return = submitted_stock_qty + current_doc_stock_qty
 
-            # -------------------------------------------------
-            # 5️⃣ Final validation
-            # -------------------------------------------------
+            # ----------------------------------------
+            # 5️⃣ Final Validation
+            # ----------------------------------------
             if total_after_this_return > original_stock_qty:
+                #return
                 frappe.throw(
                     f"""
-                    <b>Row {i} – {row.item_code}</b><br><br>
-                    Original Invoice Qty (Stock UOM): {original_stock_qty}<br>
-                    Already Returned (Stock UOM): {submitted_stock_qty}<br>
-                    Current Return (Stock UOM): {current_stock_qty}<br>
+                    <b>Item: {si_item.item_code}</b><br><br>
+                    Original Invoice Stock Qty: {original_stock_qty}<br>
+                    Already Returned (Submitted): {submitted_stock_qty}<br>
+                    Current Document (Stock): {current_doc_stock_qty}<br>
                     <br>
                     <b>Total After Return: {total_after_this_return}</b><br><br>
                     Return quantity exceeds Sales Invoice quantity.
@@ -78,13 +86,20 @@ class CombinedSalesReturn(Document):
                     title="Return Quantity Exceeded"
                 )
 
-            # -------------------------------------------------
-            # 6️⃣ Prevent decimal stock qty
-            # -------------------------------------------------
-            if current_stock_qty % 1 != 0:
+            # ----------------------------------------
+            # 6️⃣ Prevent fractional stock qty
+            # ----------------------------------------
+            if not float(current_doc_stock_qty).is_integer():
+
                 frappe.throw(
-                    f"Decimal quantity not allowed for item {row.item_code}"
+                    f"""
+                    <b>Item: {si_item.item_code}</b><br><br>
+                    Stock quantity must be a whole number.<br>
+                    Calculated stock qty: {current_doc_stock_qty}
+                    """,
+                    title="Invalid Stock Quantity"
                 )
+
 
     def validate_qty_breakup(self):
 
@@ -94,12 +109,31 @@ class CombinedSalesReturn(Document):
             store_qty = flt(row.store_qty)
             damage_qty = flt(row.damage_qty)
 
-            frappe.msgprint (f"return_qty {return_qty} store_qty {store_qty} damage_qty {damage_qty}")
+            #frappe.msgprint (f"return_qty {return_qty} store_qty {store_qty} damage_qty {damage_qty}")
+
             if abs(return_qty) <= 0:
-                continue
+                #frappe.msgprint(f"total_Quantity {total_Quantity}")
+                frappe.throw(
+                    f"""                    
+                    Return quantity can not be ({abs(return_qty)}).
+                    """,
+                    title="Invalid Quantity"
+                )
+            
+            total_Quantity = store_qty + damage_qty;
 
-            if (store_qty + damage_qty) != return_qty:
+            if abs(total_Quantity) <= 0:
+                frappe.throw(
+                    f"""
+                    <b>Row {i} – {row.item_code}</b><br><br>
+                    Store Qty ({store_qty}) + Damage Qty ({damage_qty})<br>
+                    can not be 0.
+                    """,
+                    title="Quantity Mismatch"
+                )
 
+            if abs(total_Quantity) != abs(return_qty):
+                #frappe.msgprint(f"total_Quantity {total_Quantity}")
                 frappe.throw(
                     f"""
                     <b>Row {i} – {row.item_code}</b><br><br>
@@ -318,126 +352,20 @@ def get_sales_invoice_items(customer=None, sales_invoice=None, select_all=0, ite
         r["max_returnable_qty"] = abs(r.qty or 0)
         r["original_stock_qty"] = abs(flt(r.stock_qty or 0))
         r["stock_uom"] = r.stock_uom
-        r["conversion_factor"] = flt(r.conversion_factor or 1)
+        r["conversion_factor"] = (flt(r.stock_qty) / flt(r.qty) if flt(r.qty) else 1)
         r["stock_uom_rate"] = flt(r.stock_uom_rate or r.rate)
 
 
     return rows
 
-
-# ----------------------------------------------------------------------
-# CREATE CREDIT NOTES
-# ----------------------------------------------------------------------
-
-# @frappe.whitelist()
-# def create_credit_notes(docname, submit_credit_notes=False):
-#     """
-#     Create Credit Notes grouped by Linked Invoice
-#     INCLUDING company, taxes, and proper totals
-#     """
-#     doc = frappe.get_doc("Combined Sales Return", docname)
-
-#     grouped = {}
-#     for row in doc.combined_sales_return_items:
-#         if row.linked_invoice:
-#             grouped.setdefault(row.linked_invoice, []).append(row)
-
-#     messages = []
-
-#     for invoice, items in grouped.items():
-#         original_si = frappe.get_doc("Sales Invoice", invoice)
-
-#         cn = frappe.get_doc({
-#             "doctype": "Sales Invoice",
-#             "naming_series": "ACC-SINV-RET-.YYYY.-",
-
-#             "company": original_si.company,          # ✅ REQUIRED
-#             "customer": original_si.customer,
-#             "is_return": 1,
-
-#             "return_against": original_si.name,
-#             "posting_date": frappe.utils.nowdate(),
-#             "taxes_and_charges": original_si.taxes_and_charges,
-#             "territory": original_si.territory,
-#             "credit_note.update_outstanding_for_self": 0,
-#             ""
-#             #"combined_sales_return": doc.name,
-#             "items": [],
-#             "taxes": []
-#         })
-#     if original_si.territory:
-#         cn.accounting_dimensions = {
-#             "territory": original_si.territory
-#         }
-
-# # ✅ RATE FIX (CTN vs PCS)
-    
-
-#         # --------------------------------------------------
-#         # 1️⃣ ITEMS (NEGATIVE QTY)
-#         # --------------------------------------------------
-#        # --------------------------------------------------
-# # 1️⃣ ITEMS (NEGATIVE QTY)
-# # --------------------------------------------------
-#     for item in items:
-
-#         si_item = frappe.get_doc(
-#             "Sales Invoice Item",
-#             item.sales_invoice_item
-#         )
-
-#         qty = item.qty if item.qty < 0 else -abs(item.qty)
-
-#         # ✅ RATE FIX (CTN vs PCS)
-#         rate = item.rate
-#         if item.uom == si_item.stock_uom:
-#             rate = flt(si_item.stock_uom_rate or item.rate)
-
-#         cn.append("items", {
-#             "item_code": item.item_code,
-#             "qty": qty,
-#             "rate": rate,
-#             "uom": item.uom,
-#             "territory": item.territory,
-#             "sales_invoice_item": item.sales_invoice_item
-#         })
-
-
-#         #row.sales_invoice_item = item.sales_invoice_item
-#         # --------------------------------------------------
-#         # 2️⃣ TAXES (COPIED FROM ORIGINAL SI)
-#         # --------------------------------------------------
-#         for tax in original_si.taxes:
-#             cn.append("taxes", {
-#                 "charge_type": tax.charge_type,
-#                 "account_head": tax.account_head,
-#                 "description": tax.description,
-#                 "rate": tax.rate,
-#                 "included_in_print_rate": tax.included_in_print_rate,
-#                 "cost_center": tax.cost_center,
-#                  "territory": original_si.territory
-
-#             })
-
-#         # --------------------------------------------------
-#         # 3️⃣ CALCULATE TOTALS (MANDATORY)
-#         # --------------------------------------------------
-#         cn.set_missing_values()
-#         cn.calculate_taxes_and_totals()
-#         cn.territory = original_si.territory
-#         cn.insert(ignore_permissions=True)
-
-#         if submit_credit_notes:
-#             cn.submit()
-
-#         messages.append(f"Credit Note created for {invoice}: {cn.name}")
-
-#     return "\n".join(messages)
-
 @frappe.whitelist()
 def create_credit_notes(docname, submit_credit_notes=False):
 
     doc = frappe.get_doc("Combined Sales Return", docname)
+
+    # Force validation before proceeding
+    doc.validate_return_quantities()
+    doc.validate_qty_breakup()
 
     grouped = {}
     for row in doc.combined_sales_return_items:
@@ -536,12 +464,13 @@ def get_already_returned_qty(invoice, invoice_item_row):
 
 def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
     """
-    Returns (submitted_qty, draft_qty)
+    Returns (submitted_stock_qty, draft_stock_qty)
+    All quantities are in STOCK UOM
     """
+    frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
+
     params = [invoice, invoice_item_row]
     exclude_cond = ""
-
-    #frappe.msgprint(f"invoice {invoice} invoice_item_row {invoice_item_row}")
 
     if exclude_docname:
         exclude_cond = " AND si.name != %s"
@@ -550,7 +479,7 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
     rows = frappe.db.sql(f"""
         SELECT
             si.docstatus,
-            ABS(SUM(sii.qty)) AS qty
+            ABS(SUM(sii.stock_qty)) AS stock_qty
         FROM `tabSales Invoice` si
         INNER JOIN `tabSales Invoice Item` sii ON sii.parent = si.name
         WHERE
@@ -563,16 +492,35 @@ def get_returned_qty_breakdown(invoice, invoice_item_row, exclude_docname=None):
 
     submitted = 0
     draft = 0
-    
-    #frappe.msgprint(f"rows {rows}")
 
     for r in rows:
         if r.docstatus == 1:
-            submitted = flt(r.qty)
+            submitted = flt(r.stock_qty)
         elif r.docstatus == 0:
-            draft = flt(r.qty)
+            draft = flt(r.stock_qty)
 
     return submitted, draft
+
+
+@frappe.whitelist()
+def get_conversion_factor(item_code, uom):
+    """
+    Securely fetch conversion factor from Item master
+    """
+    if not item_code or not uom:
+        return None
+
+    item = frappe.get_doc("Item", item_code)
+
+    # frappe.msgprint(f"item {item}")
+    # frappe.msgprint(f"uom selected {uom}")
+
+    for d in item.uoms:
+        if d.uom == uom:
+            #frappe.msgprint(f"uom after {uom}")
+            return flt(d.conversion_factor)
+
+    return None
 
 
 

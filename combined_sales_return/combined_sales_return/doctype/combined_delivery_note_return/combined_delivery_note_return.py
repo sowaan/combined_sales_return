@@ -8,8 +8,7 @@ from frappe.utils import flt
 class CombinedDeliveryNoteReturn(Document):
 
     def validate(self):
-        self.validate_return_quantities()
-        self.validate_warehouse_selection()
+        self.validate_return_quantities()        
         self.validate_qty_breakup()
 
     def validate_qty_breakup(self):
@@ -41,17 +40,12 @@ class CombinedDeliveryNoteReturn(Document):
             if not row.delivery_note_item:
                 continue
 
-            # 1️⃣ Original delivered stock qty
-            dn_item = frappe.get_doc(
-                "Delivery Note Item",
-                row.delivery_note_item
-            )
+            # 1️⃣ Get original DN Item
+            dn_item = frappe.get_doc("Delivery Note Item", row.delivery_note_item)
 
             original_stock_qty = abs(flt(dn_item.stock_qty))
 
-            frappe.msgprint(f"original_stock_qty {original_stock_qty}")
-
-            # 2️⃣ Already submitted returns (other documents)
+            # 2️⃣ Already submitted returns (STOCK UOM)
             submitted_stock_qty = frappe.db.sql("""
                 SELECT ABS(SUM(dni.stock_qty))
                 FROM `tabDelivery Note Item` dni
@@ -61,75 +55,45 @@ class CombinedDeliveryNoteReturn(Document):
                 AND dn.is_return = 1
                 AND dn.return_against = %s
                 AND dni.dn_detail = %s
-            """, (
-                row.delivery_note,
-                row.delivery_note_item,
-            ))[0][0] or 0
+            """, (row.delivery_note, row.delivery_note_item))[0][0] or 0
 
-            # 3️⃣ Sum all rows of THIS document (stock UOM)
+            # 3️⃣ Calculate THIS document total (STOCK UOM)
             current_doc_stock_qty = 0
 
             for r in self.items:
-
                 if r.delivery_note_item == row.delivery_note_item:
 
-                    if r.uom == dn_item.stock_uom:
-                        conversion_factor = 1
-                    else:
-                        conversion_factor = flt(r.conversion_factor or 1)
+                    conversion_factor = flt(r.conversion_factor) or 1
+                    current_doc_stock_qty += abs(flt(r.return_qty)) * conversion_factor
 
-                    current_doc_stock_qty += (
-                        abs(flt(r.return_qty or 0)) * conversion_factor
-                    )
-
-            #frappe.msgprint(f"submitted_stock_qty {submitted_stock_qty} current_doc_stock_qty {current_doc_stock_qty}")
-
-            total_after_this_return = submitted_stock_qty + current_doc_stock_qty
+            total_after_return = submitted_stock_qty + current_doc_stock_qty
 
             # 4️⃣ Final validation
-            if total_after_this_return > original_stock_qty:
+            if total_after_return > original_stock_qty:
 
                 frappe.throw(
                     f"""
                     <b>Row {i} – {row.item_code}</b><br><br>
-                    Original Delivered Qty: {original_stock_qty}<br>
-                    Already Returned (Submitted): {submitted_stock_qty}<br>
-                    This Document Total: {current_doc_stock_qty}<br>
-                    <br>
-                    <b>Total After Return: {total_after_this_return}</b><br><br>
-                    Return quantity exceeds Delivery Note quantity.
+                    Original Delivered (Stock): {original_stock_qty}<br>
+                    Already Returned (Stock): {submitted_stock_qty}<br>
+                    This Document Total (Stock): {current_doc_stock_qty}<br><br>
+                    <b>Total After Return: {total_after_return}</b><br><br>
+                    Return quantity exceeds delivered quantity.
                     """,
                     title="Return Quantity Exceeded"
                 )
 
+            # 5️⃣ Prevent fractional stock qty
+            if not float(abs(flt(row.return_qty)) * flt(row.conversion_factor or 1)).is_integer():
 
-    def validate_warehouse_selection(self):
-
-        for i, row in enumerate(self.items, start=1):
-
-            # -------------------------------------------------
-            # 1️⃣ Store Qty Validation
-            # -------------------------------------------------
-            if flt(row.store_qty) > 0 and not row.store_warehouse:
                 frappe.throw(
                     f"""
-                    <b>Row {i} – {row.item_code}</b><br><br>
-                    Store Warehouse is missing.
+                    Row {i} – {row.item_code}<br><br>
+                    Stock quantity must be whole number.
                     """,
-                    title="Missing Store Warehouse"
+                    title="Invalid Quantity"
                 )
 
-            # -------------------------------------------------
-            # 2️⃣ Damage Qty Validation
-            # -------------------------------------------------
-            if flt(row.damage_qty) > 0 and not row.damage_warehouse:
-                frappe.throw(
-                    f"""
-                    <b>Row {i} – {row.item_code}</b><br><br>
-                    Damage Warehouse is missing
-                    """,
-                    title="Missing Damage Warehouse"
-                )
 
     
 
@@ -192,13 +156,9 @@ class CombinedDeliveryNoteReturn(Document):
                 # --------------------------------------------------
                 total_return_qty = flt(r.store_qty) + flt(r.damage_qty)
 
-                if r.uom == dn_item.stock_uom:
-                    current_return_stock_qty = total_return_qty
-                else:
-                    # CTN → PCS (or any UOM → stock_uom)
-                    current_return_stock_qty = (
-                        total_return_qty * flt(dn_item.conversion_factor)
-                    )
+                conversion_factor = flt(r.conversion_factor) or 1
+                current_return_stock_qty = total_return_qty * conversion_factor
+
 
                 # --------------------------------------------------
                 # 5️⃣ BALANCE CHECK
@@ -375,3 +335,22 @@ def get_delivery_note_items(customer, delivery_note=None, item_code=None, fetch_
     return data
 
 
+@frappe.whitelist()
+def get_conversion_factor(item_code, uom):
+    """
+    Securely fetch conversion factor from Item master
+    """
+    if not item_code or not uom:
+        return None
+
+    item = frappe.get_doc("Item", item_code)
+
+    # frappe.msgprint(f"item {item}")
+    # frappe.msgprint(f"uom selected {uom}")
+
+    for d in item.uoms:
+        if d.uom == uom:
+            #frappe.msgprint(f"uom after {uom}")
+            return flt(d.conversion_factor)
+
+    return None

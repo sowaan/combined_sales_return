@@ -95,7 +95,7 @@ function open_dn_popup(frm) {
 
                 let row = frm.add_child("items");
                 row.delivery_note = d.deliveryNote;
-                row.delivery_note_item = d.dnItem;
+                row.delivery_note_item = d.deliveryNoteItem;
                 row.item_code = d.itemCode;
                 row.item_name = d.itemName;
                 row.uom = d.uom;
@@ -108,6 +108,7 @@ function open_dn_popup(frm) {
                 row.amount = d.amount;
                 row.remaining_stock_qty = d.remainingStockQty;
                 row.conversion_factor = d.conversionFactor;
+                row.invoice_conversion_factor = d.conversionFactor;
     
 
             });
@@ -271,6 +272,8 @@ frappe.ui.form.on("Combined Delivery Note Return Item", {
 
     uom(frm, cdt, cdn) {
 
+        enforce_max_limit(frm, cdt, cdn);
+
         let row = locals[cdt][cdn];
         //console.log(row);
         // 🔁 Update conversion factor dynamically
@@ -286,8 +289,7 @@ frappe.ui.form.on("Combined Delivery Note Return Item", {
             row.conversion_factor = row.conversion_factor;
             row.rate = row.dn_rate;
         }
-
-        enforce_max_limit(frm, cdt, cdn);
+        
         update_remaining_for_item(frm, row.delivery_note_item);
         recalc_amount(frm, cdt, cdn);
 
@@ -363,45 +365,51 @@ function recalc_amount(frm, cdt, cdn) {
     frm.refresh_field("items");
 }
 
-
 function enforce_max_limit(frm, cdt, cdn) {
 
     let current_row = locals[cdt][cdn];
 
-    console.log(current_row)
-    let delivered = current_row.delivered_qty;  // constant 120
+    let delivered_stock_qty = current_row.delivered_qty; // 120
 
-    console.log(delivered)
-    let total_stock_qty = 0;
+    let used_stock_qty = 0;
 
+    // Sum other rows only
     frm.doc.items.forEach(row => {
 
-        if (row.delivery_note_item === current_row.delivery_note_item) {
+        if (
+            row.delivery_note_item === current_row.delivery_note_item &&
+            row.name !== current_row.name
+        ) {
 
             let qty = row.return_qty || 0;
+            let factor = row.conversion_factor || 1;
 
-            if (row.uom === row.stock_uom) {
-                total_stock_qty += qty;
-            } else {
-                total_stock_qty += qty * row.conversion_factor;
-            }
+            used_stock_qty += qty * factor;
         }
     });
 
-    console.log(total_stock_qty)
-    console.log(delivered)
-    
-    if (total_stock_qty > delivered) {
+    let current_stock_qty =
+        (current_row.return_qty || 0) *
+        (current_row.conversion_factor || 1);
+
+    let allowed_stock_qty = delivered_stock_qty - used_stock_qty;
+
+    console.log("Delivered:", delivered_stock_qty);
+    console.log("Used (other rows):", used_stock_qty);
+    console.log("Allowed:", allowed_stock_qty);
+    console.log("Current Attempt:", current_stock_qty);
+
+    if (current_stock_qty > allowed_stock_qty) {
 
         frappe.msgprint({
             title: __("Quantity Exceeded"),
-            message: __("Total return quantity exceeds delivered quantity."),
+            message:
+                "Allowed Stock Qty: " + allowed_stock_qty +
+                "<br>Attempted Return Stock Qty: " + current_stock_qty,
             indicator: "red"
         });
 
-        // Reset only current row
         current_row.return_qty = 0;
-
         frm.refresh_field("items");
 
         return false;
@@ -409,6 +417,8 @@ function enforce_max_limit(frm, cdt, cdn) {
 
     return true;
 }
+
+
 
 
 
@@ -484,6 +494,73 @@ function update_remaining_for_item(frm, delivery_note_item) {
     frm.refresh_field("items");
 }
 
+frappe.ui.form.on("Combined Delivery Note Return Item", {
+    
+    
+    return_qty(frm, cdt, cdn) {        
 
+        enforce_integer_qty(frm, cdt, cdn);
+       
 
+        if (enforce_max_limit(frm, cdt, cdn)) {
+            recalc_amount(frm, cdt, cdn);
+            update_remaining_for_item(frm, locals[cdt][cdn].delivery_note_item);
+        }
+    },
+
+    uom(frm, cdt, cdn) {
+
+        let row = locals[cdt][cdn];
+
+        if (!row) return;
+
+        // Update conversion factor from server
+        frappe.call({
+            method: "combined_sales_return.combined_sales_return.doctype.combined_delivery_note_return.combined_delivery_note_return.get_conversion_factor",
+            args: {
+                item_code: row.item_code,
+                uom: row.uom
+            },
+            callback(r) {
+
+                if (r.message) {
+                    frappe.model.set_value(cdt, cdn, "conversion_factor", r.message);
+                }
+
+                // 🔥 VALIDATE AGAIN AFTER UOM CHANGE
+                if (enforce_max_limit(frm, cdt, cdn)) {
+                    recalc_amount(frm, cdt, cdn);
+                    update_remaining_for_item(frm, row.delivery_note_item);
+                }
+            }
+        });
+    }
+});
+
+// -------------------------------
+// Store / Damage Qty Validation
+// -------------------------------
+frappe.ui.form.on("Combined Delivery Note Return Item", {
+    store_qty(frm, cdt, cdn) {
+        validate_split_qty(cdt, cdn);
+    },
+    damage_qty(frm, cdt, cdn) {
+        validate_split_qty(cdt, cdn);
+    }
+});
+
+function validate_split_qty(cdt, cdn) {
+    let row = locals[cdt][cdn];
+    if (!row) return;
+
+    let total = flt(row.store_qty || 0) + flt(row.damage_qty || 0);
+    let return_qty = Math.abs(flt(row.qty || 0));
+
+    if (total !== return_qty) {
+        frappe.show_alert({
+            message: "Store Qty + Damage Qty must equal Return Qty",
+            indicator: "orange"
+        });
+    }    
+}
 
